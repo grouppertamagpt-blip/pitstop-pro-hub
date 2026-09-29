@@ -52,6 +52,10 @@ import {
   type MetodeBayar,
   type Servis,
 } from "@/lib/store";
+import {
+  storagePaymentService,
+  type WorkshopPaymentAccountRow,
+} from "@/services/appbenk-service";
 
 export const Route = createFileRoute("/_shell/pelanggan/pembayaran")({
   validateSearch: (search: Record<string, unknown>): { trx?: string } =>
@@ -124,6 +128,8 @@ function PembayaranPelanggan() {
     bengkel,
     workshopPaymentAccounts,
     refreshPaymentAccounts,
+    refreshPembayaran,
+    refreshServis,
   } = useStore();
 
   const currentBengkel = bengkel[0];
@@ -209,6 +215,9 @@ function PembayaranPelanggan() {
   const [sukses, setSukses] = useState(false);
   const [bukti, setBukti] = useState<string | undefined>();
   const [namaBukti, setNamaBukti] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
   // Bukti Preview modal
@@ -375,18 +384,32 @@ function PembayaranPelanggan() {
 
   useEffect(() => {
     refreshPaymentAccounts(targetWorkshopId);
+    refreshPembayaran(targetWorkshopId);
+    refreshServis?.();
+
     const handleUpdated = () => {
       refreshPaymentAccounts(targetWorkshopId);
+      refreshPembayaran(targetWorkshopId);
+      refreshServis?.();
     };
-    if (typeof window !== "undefined") {
-      window.addEventListener("appbenk_payment_accounts_updated", handleUpdated);
-      window.addEventListener("storage", handleUpdated);
-      return () => {
-        window.removeEventListener("appbenk_payment_accounts_updated", handleUpdated);
-        window.removeEventListener("storage", handleUpdated);
-      };
-    }
-  }, [targetWorkshopId, refreshPaymentAccounts]);
+
+    if (typeof window === "undefined") return;
+    window.addEventListener("appbenk_payment_accounts_updated", handleUpdated);
+    window.addEventListener("appbenk_pembayaran_updated", handleUpdated);
+    window.addEventListener("appbenk_servis_updated", handleUpdated);
+    window.addEventListener("storage", handleUpdated);
+
+    // Polling fallback 10 detik agar status pembayaran & tagihan pelanggan selalu sinkron
+    const interval = setInterval(handleUpdated, 10000);
+
+    return () => {
+      window.removeEventListener("appbenk_payment_accounts_updated", handleUpdated);
+      window.removeEventListener("appbenk_pembayaran_updated", handleUpdated);
+      window.removeEventListener("appbenk_servis_updated", handleUpdated);
+      window.removeEventListener("storage", handleUpdated);
+      clearInterval(interval);
+    };
+  }, [targetWorkshopId, refreshPaymentAccounts, refreshPembayaran, refreshServis]);
 
   useEffect(() => {
     setQrisImageError(false);
@@ -434,54 +457,101 @@ function PembayaranPelanggan() {
     setDetailModalOpen(true);
   };
 
-  const bukaModalBayar = (s: Servis) => {
-    if (!s) return;
-    setPilih(s.id);
-    setModalItem(s);
+  const bukaModalBayar = (s?: Servis | null) => {
+    const target = s || detail || modalItem || (transaksi && transaksi[0]);
+    if (!target) {
+      toast.error("Data tagihan transaksi tidak ditemukan.");
+      return;
+    }
+    setPilih(target.id);
+    setModalItem(target);
     setSukses(false);
     setMetode(isQrisActive ? "QRIS" : "Transfer Bank");
     setBukti(undefined);
     setNamaBukti("");
+    setSelectedFile(null);
+    setFileInputKey((prev) => prev + 1);
     setBayarOpen(true);
   };
 
-  const konfirmasiManual = (s: Servis) => {
+  const konfirmasiManual = async (s?: Servis | null) => {
+    const target = s || detail || modalItem || (transaksi && transaksi[0]);
+    if (!target) {
+      toast.error("Data tagihan transaksi tidak ditemukan.");
+      return;
+    }
+
     // Duplicate check
     const pmb = pembayaran.find(
-      (p) => p.servisId === s.id || p.noTransaksi === s.noTransaksi,
+      (p) => p.servisId === target.id || p.noTransaksi === target.noTransaksi,
     );
     if (
-      s.status === "Selesai Dibayar" ||
+      target.status === "Selesai Dibayar" ||
       pmb?.status === "Lunas"
     ) {
       toast.error("Tagihan ini sudah lunas!");
       return;
     }
 
-    if (metode === "Transfer Bank" && !bukti) {
+    if (metode === "Transfer Bank" && !bukti && !selectedFile) {
       toast.error("Bukti transfer bank wajib diunggah untuk verifikasi.");
       return;
     }
 
-    if (metode === "QRIS" && !bukti) {
+    if (metode === "QRIS" && !bukti && !selectedFile) {
       toast.error(
         "Silakan unggah screenshot atau tangkap layar bukti pembayaran QRIS Anda.",
       );
       return;
     }
 
-    // Submit payment - strictly goes to menunggu_verifikasi
-    ajukanPembayaran(s.id, metode, metode === "Cash" ? undefined : bukti);
-    setSukses(true);
+    try {
+      setIsSubmitting(true);
+      let finalBuktiUrl = bukti;
 
-    if (metode === "Cash") {
-      toast.success(
-        `Pengajuan pembayaran tunai ${s.noTransaksi} terkirim! Admin bengkel akan memverifikasi saat pembayaran diterima di kasir.`,
-      );
-    } else {
-      toast.success(
-        `Bukti pembayaran ${metode} ${s.noTransaksi} berhasil diajukan! Admin bengkel akan memverifikasi.`,
-      );
+      // Upload file asli ke backend/storage jika ada
+      if (selectedFile && metode !== "Cash") {
+        try {
+          const uploadedUrl = await storagePaymentService.uploadBuktiPembayaran(
+            targetWorkshopId || "bengkel-001",
+            target.noTransaksi,
+            selectedFile
+          );
+          if (uploadedUrl) {
+            finalBuktiUrl = uploadedUrl;
+          }
+        } catch (uploadErr) {
+          console.warn("Upload file to storage failed, using data URL fallback:", uploadErr);
+        }
+      }
+
+      // Submit payment - strictly updates status to 'Menunggu Verifikasi' and resets rejection reason
+      ajukanPembayaran(target.id, metode, metode === "Cash" ? undefined : finalBuktiUrl);
+
+      // Tutup modal agar pelanggan langsung melihat banner status "Sedang Diverifikasi"
+      setBayarOpen(false);
+      setSukses(false);
+      setBukti(undefined);
+      setNamaBukti("");
+      setSelectedFile(null);
+
+      // Refresh pembayaran data
+      await refreshPembayaran(targetWorkshopId);
+
+      if (metode === "Cash") {
+        toast.success(
+          `Pengajuan pembayaran tunai ${target.noTransaksi} terkirim! Admin bengkel akan memverifikasi saat pembayaran diterima di kasir.`,
+        );
+      } else {
+        toast.success(
+          `Bukti pembayaran ${metode} ${target.noTransaksi} berhasil dikirim! Menunggu verifikasi admin bengkel.`,
+        );
+      }
+    } catch (err: any) {
+      console.error("Gagal mengirim pembayaran:", err);
+      toast.error(err?.message || "Gagal mengirim pembayaran. Silakan coba lagi.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -623,7 +693,7 @@ function PembayaranPelanggan() {
 
   const unggahBukti = (file?: File) => {
     if (!file) return;
-    if (!/^(image\/(jpeg|png|webp)|application\/pdf)$/.test(file.type)) {
+    if (!/^(image\/(jpeg|png|webp)|application\/pdf)$/i.test(file.type) && !/\.(jpe?g|png|webp|pdf)$/i.test(file.name)) {
       toast.error("Format bukti harus JPG, JPEG, PNG, WEBP, atau PDF.");
       return;
     }
@@ -631,10 +701,11 @@ function PembayaranPelanggan() {
       toast.error("Ukuran bukti maksimal 5 MB.");
       return;
     }
+    setSelectedFile(file);
+    setNamaBukti(file.name);
     const reader = new FileReader();
     reader.onload = () => {
       setBukti(String(reader.result));
-      setNamaBukti(file.name);
     };
     reader.readAsDataURL(file);
   };
@@ -768,17 +839,27 @@ function PembayaranPelanggan() {
                 </Button>
               ) : isDitolak ? (
                 <Button
+                  type="button"
                   variant="destructive"
                   size="sm"
-                  onClick={() => bukaModalBayar(detail)}
-                  className="gap-1.5"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    bukaModalBayar(detail);
+                  }}
+                  className="gap-1.5 cursor-pointer"
                 >
                   <UploadCloud className="size-4" /> Bayar Ulang / Upload Bukti Baru
                 </Button>
               ) : (
                 <Button
-                  onClick={() => bukaModalBayar(detail)}
-                  className="gap-1.5 shadow-sm"
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    bukaModalBayar(detail);
+                  }}
+                  className="gap-1.5 shadow-sm cursor-pointer"
                 >
                   <QrCode className="size-4" /> Bayar Sekarang
                 </Button>
@@ -812,6 +893,7 @@ function PembayaranPelanggan() {
                 </div>
                 {Boolean(currentPayment?.buktiUrl || (currentPayment as any)?.bukti_pembayaran) && (
                   <Button
+                    type="button"
                     variant="outline"
                     size="sm"
                     onClick={() => {
@@ -822,7 +904,7 @@ function PembayaranPelanggan() {
                       );
                       setPreviewBuktiOpen(true);
                     }}
-                    className="shrink-0 gap-1 border-amber-500/40 text-amber-800 hover:bg-amber-100/50 dark:text-amber-200"
+                    className="shrink-0 gap-1 border-amber-500/40 text-amber-800 hover:bg-amber-100/50 dark:text-amber-200 cursor-pointer"
                   >
                     <Eye className="size-3.5" /> Lihat Bukti Saya
                   </Button>
@@ -850,10 +932,15 @@ function PembayaranPelanggan() {
                   </div>
                 </div>
                 <Button
+                  type="button"
                   variant="destructive"
                   size="sm"
-                  onClick={() => bukaModalBayar(detail)}
-                  className="shrink-0 gap-1"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    bukaModalBayar(detail);
+                  }}
+                  className="shrink-0 gap-1 cursor-pointer"
                 >
                   <UploadCloud className="size-3.5" /> Unggah Bukti Baru
                 </Button>
@@ -1516,6 +1603,8 @@ function PembayaranPelanggan() {
                             onClick={() => {
                               setBukti(undefined);
                               setNamaBukti("");
+                              setSelectedFile(null);
+                              setFileInputKey((prev) => prev + 1);
                             }}
                             className="h-7 text-xs text-destructive hover:text-destructive"
                           >
@@ -1537,10 +1626,14 @@ function PembayaranPelanggan() {
                             JPG, PNG, atau PDF (maksimal 5 MB)
                           </span>
                           <input
+                            key={`bukti-qris-${fileInputKey}`}
                             id="bukti-qris"
                             type="file"
                             accept=".jpg,.jpeg,.png,.webp,image/*,application/pdf"
-                            onChange={(e) => unggahBukti(e.target.files?.[0])}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) unggahBukti(f);
+                            }}
                             className="hidden"
                           />
                         </label>
@@ -1710,6 +1803,8 @@ function PembayaranPelanggan() {
                             onClick={() => {
                               setBukti(undefined);
                               setNamaBukti("");
+                              setSelectedFile(null);
+                              setFileInputKey((prev) => prev + 1);
                             }}
                             className="h-7 text-xs text-destructive hover:text-destructive"
                           >
@@ -1720,10 +1815,14 @@ function PembayaranPelanggan() {
                     ) : (
                       <div className="space-y-2">
                         <Input
+                          key={`bukti-transfer-${fileInputKey}`}
                           id="bukti-transfer"
                           type="file"
                           accept=".jpg,.jpeg,.png,.webp,.pdf,image/*,application/pdf"
-                          onChange={(e) => unggahBukti(e.target.files?.[0])}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) unggahBukti(f);
+                          }}
                         />
                         <p className="text-[11px] text-muted-foreground">
                           Format JPG, JPEG, PNG, WEBP, atau PDF. Ukuran maksimal 5 MB.
@@ -1776,11 +1875,15 @@ function PembayaranPelanggan() {
                   Batal
                 </Button>
                 <Button
+                  type="button"
+                  disabled={isSubmitting}
                   onClick={() => konfirmasiManual(detail)}
-                  className="gap-2 shadow-xs font-bold"
+                  className="gap-2 shadow-xs font-bold cursor-pointer"
                 >
                   <CheckCircle2 className="size-4" />
-                  {metode === "Cash"
+                  {isSubmitting
+                    ? "Mengirim..."
+                    : metode === "Cash"
                     ? "Konfirmasi Bayar Tunai (Cash)"
                     : `Kirim Bukti Pembayaran (${metode})`}
                 </Button>

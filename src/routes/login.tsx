@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
+  Building2,
   Eye,
   EyeOff,
   Loader2,
@@ -340,6 +341,18 @@ function LoginPage() {
                 Daftar sekarang
               </Link>
             </p>
+
+            <div className="pt-3 border-t text-center">
+              <p className="text-xs text-muted-foreground">
+                Punya usaha bengkel motor?
+              </p>
+              <Link
+                to="/daftar-bengkel"
+                className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline underline-offset-4"
+              >
+                <Building2 className="size-3.5" /> Daftarkan Bengkel Anda sebagai Mitra
+              </Link>
+            </div>
           </form>
         </div>
       </div>

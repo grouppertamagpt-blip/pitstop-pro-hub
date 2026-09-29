@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ShellRouteImport } from './routes/_shell'
+import { Route as AcceptInviteRouteImport } from './routes/accept-invite'
+import { Route as DaftarBengkelRouteImport } from './routes/daftar-bengkel'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as RegisterRouteImport } from './routes/register'
@@ -18,6 +20,7 @@ import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as VerifyResetCodeRouteImport } from './routes/verify-reset-code'
 import { Route as ShellProfilRouteImport } from './routes/_shell.profil'
+import { Route as DaftarBengkelStatusRouteImport } from './routes/daftar-bengkel.status'
 import { Route as ResetPasswordNewRouteImport } from './routes/reset-password.new'
 import { Route as ShellAdminBookingRouteImport } from './routes/_shell.admin.booking'
 import { Route as ShellAdminCsRouteImport } from './routes/_shell.admin.cs'
@@ -29,6 +32,8 @@ import { Route as ShellAdminPengaturanRouteImport } from './routes/_shell.admin.
 import { Route as ShellAdminServisRouteImport } from './routes/_shell.admin.servis'
 import { Route as ShellAdminSparepartRouteImport } from './routes/_shell.admin.sparepart'
 import { Route as ShellAdminStokRouteImport } from './routes/_shell.admin.stok'
+import { Route as ShellOwnerAdminRouteImport } from './routes/_shell.owner.admin'
+import { Route as ShellOwnerCsRouteImport } from './routes/_shell.owner.cs'
 import { Route as ShellOwnerDashboardRouteImport } from './routes/_shell.owner.dashboard'
 import { Route as ShellOwnerKeuntunganRouteImport } from './routes/_shell.owner.keuntungan'
 import { Route as ShellOwnerPelangganRouteImport } from './routes/_shell.owner.pelanggan'
@@ -46,6 +51,8 @@ import { Route as ShellSuperadminCsRouteImport } from './routes/_shell.superadmi
 import { Route as ShellSuperadminDashboardRouteImport } from './routes/_shell.superadmin.dashboard'
 import { Route as ShellSuperadminErrorLogRouteImport } from './routes/_shell.superadmin.error-log'
 import { Route as ShellSuperadminKlienRouteImport } from './routes/_shell.superadmin.klien'
+import { Route as ShellSuperadminPengajuanBengkelRouteImport } from './routes/_shell.superadmin.pengajuan-bengkel'
+import { Route as AdminUndanganTokenRouteImport } from './routes/admin.undangan.$token'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -54,6 +61,16 @@ const IndexRoute = IndexRouteImport.update({
 } as any)
 const ShellRoute = ShellRouteImport.update({
   id: '/_shell',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AcceptInviteRoute = AcceptInviteRouteImport.update({
+  id: '/accept-invite',
+  path: '/accept-invite',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DaftarBengkelRoute = DaftarBengkelRouteImport.update({
+  id: '/daftar-bengkel',
+  path: '/daftar-bengkel',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
@@ -90,6 +107,11 @@ const ShellProfilRoute = ShellProfilRouteImport.update({
   id: '/profil',
   path: '/profil',
   getParentRoute: () => ShellRoute,
+} as any)
+const DaftarBengkelStatusRoute = DaftarBengkelStatusRouteImport.update({
+  id: '/status',
+  path: '/status',
+  getParentRoute: () => DaftarBengkelRoute,
 } as any)
 const ResetPasswordNewRoute = ResetPasswordNewRouteImport.update({
   id: '/new',
@@ -144,6 +166,16 @@ const ShellAdminSparepartRoute = ShellAdminSparepartRouteImport.update({
 const ShellAdminStokRoute = ShellAdminStokRouteImport.update({
   id: '/admin/stok',
   path: '/admin/stok',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellOwnerAdminRoute = ShellOwnerAdminRouteImport.update({
+  id: '/owner/admin',
+  path: '/owner/admin',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellOwnerCsRoute = ShellOwnerCsRouteImport.update({
+  id: '/owner/cs',
+  path: '/owner/cs',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellOwnerDashboardRoute = ShellOwnerDashboardRouteImport.update({
@@ -233,9 +265,22 @@ const ShellSuperadminKlienRoute = ShellSuperadminKlienRouteImport.update({
   path: '/superadmin/klien',
   getParentRoute: () => ShellRoute,
 } as any)
+const ShellSuperadminPengajuanBengkelRoute =
+  ShellSuperadminPengajuanBengkelRouteImport.update({
+    id: '/superadmin/pengajuan-bengkel',
+    path: '/superadmin/pengajuan-bengkel',
+    getParentRoute: () => ShellRoute,
+  } as any)
+const AdminUndanganTokenRoute = AdminUndanganTokenRouteImport.update({
+  id: '/admin/undangan/$token',
+  path: '/admin/undangan/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/accept-invite': typeof AcceptInviteRoute
+  '/daftar-bengkel': typeof DaftarBengkelRouteWithChildren
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
@@ -243,6 +288,7 @@ export interface FileRoutesByFullPath {
   '/verify-email': typeof VerifyEmailRoute
   '/verify-reset-code': typeof VerifyResetCodeRoute
   '/profil': typeof ShellProfilRoute
+  '/daftar-bengkel/status': typeof DaftarBengkelStatusRoute
   '/reset-password/new': typeof ResetPasswordNewRoute
   '/admin/booking': typeof ShellAdminBookingRoute
   '/admin/cs': typeof ShellAdminCsRoute
@@ -254,6 +300,8 @@ export interface FileRoutesByFullPath {
   '/admin/servis': typeof ShellAdminServisRoute
   '/admin/sparepart': typeof ShellAdminSparepartRoute
   '/admin/stok': typeof ShellAdminStokRoute
+  '/owner/admin': typeof ShellOwnerAdminRoute
+  '/owner/cs': typeof ShellOwnerCsRoute
   '/owner/dashboard': typeof ShellOwnerDashboardRoute
   '/owner/keuntungan': typeof ShellOwnerKeuntunganRoute
   '/owner/pelanggan': typeof ShellOwnerPelangganRoute
@@ -271,9 +319,13 @@ export interface FileRoutesByFullPath {
   '/superadmin/dashboard': typeof ShellSuperadminDashboardRoute
   '/superadmin/error-log': typeof ShellSuperadminErrorLogRoute
   '/superadmin/klien': typeof ShellSuperadminKlienRoute
+  '/superadmin/pengajuan-bengkel': typeof ShellSuperadminPengajuanBengkelRoute
+  '/admin/undangan/$token': typeof AdminUndanganTokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/accept-invite': typeof AcceptInviteRoute
+  '/daftar-bengkel': typeof DaftarBengkelRouteWithChildren
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
@@ -281,6 +333,7 @@ export interface FileRoutesByTo {
   '/verify-email': typeof VerifyEmailRoute
   '/verify-reset-code': typeof VerifyResetCodeRoute
   '/profil': typeof ShellProfilRoute
+  '/daftar-bengkel/status': typeof DaftarBengkelStatusRoute
   '/reset-password/new': typeof ResetPasswordNewRoute
   '/admin/booking': typeof ShellAdminBookingRoute
   '/admin/cs': typeof ShellAdminCsRoute
@@ -292,6 +345,8 @@ export interface FileRoutesByTo {
   '/admin/servis': typeof ShellAdminServisRoute
   '/admin/sparepart': typeof ShellAdminSparepartRoute
   '/admin/stok': typeof ShellAdminStokRoute
+  '/owner/admin': typeof ShellOwnerAdminRoute
+  '/owner/cs': typeof ShellOwnerCsRoute
   '/owner/dashboard': typeof ShellOwnerDashboardRoute
   '/owner/keuntungan': typeof ShellOwnerKeuntunganRoute
   '/owner/pelanggan': typeof ShellOwnerPelangganRoute
@@ -309,11 +364,15 @@ export interface FileRoutesByTo {
   '/superadmin/dashboard': typeof ShellSuperadminDashboardRoute
   '/superadmin/error-log': typeof ShellSuperadminErrorLogRoute
   '/superadmin/klien': typeof ShellSuperadminKlienRoute
+  '/superadmin/pengajuan-bengkel': typeof ShellSuperadminPengajuanBengkelRoute
+  '/admin/undangan/$token': typeof AdminUndanganTokenRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_shell': typeof ShellRouteWithChildren
+  '/accept-invite': typeof AcceptInviteRoute
+  '/daftar-bengkel': typeof DaftarBengkelRouteWithChildren
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
@@ -321,6 +380,7 @@ export interface FileRoutesById {
   '/verify-email': typeof VerifyEmailRoute
   '/verify-reset-code': typeof VerifyResetCodeRoute
   '/_shell/profil': typeof ShellProfilRoute
+  '/daftar-bengkel/status': typeof DaftarBengkelStatusRoute
   '/reset-password/new': typeof ResetPasswordNewRoute
   '/_shell/admin/booking': typeof ShellAdminBookingRoute
   '/_shell/admin/cs': typeof ShellAdminCsRoute
@@ -332,6 +392,8 @@ export interface FileRoutesById {
   '/_shell/admin/servis': typeof ShellAdminServisRoute
   '/_shell/admin/sparepart': typeof ShellAdminSparepartRoute
   '/_shell/admin/stok': typeof ShellAdminStokRoute
+  '/_shell/owner/admin': typeof ShellOwnerAdminRoute
+  '/_shell/owner/cs': typeof ShellOwnerCsRoute
   '/_shell/owner/dashboard': typeof ShellOwnerDashboardRoute
   '/_shell/owner/keuntungan': typeof ShellOwnerKeuntunganRoute
   '/_shell/owner/pelanggan': typeof ShellOwnerPelangganRoute
@@ -349,11 +411,15 @@ export interface FileRoutesById {
   '/_shell/superadmin/dashboard': typeof ShellSuperadminDashboardRoute
   '/_shell/superadmin/error-log': typeof ShellSuperadminErrorLogRoute
   '/_shell/superadmin/klien': typeof ShellSuperadminKlienRoute
+  '/_shell/superadmin/pengajuan-bengkel': typeof ShellSuperadminPengajuanBengkelRoute
+  '/admin/undangan/$token': typeof AdminUndanganTokenRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/accept-invite'
+    | '/daftar-bengkel'
     | '/forgot-password'
     | '/login'
     | '/register'
@@ -361,6 +427,7 @@ export interface FileRouteTypes {
     | '/verify-email'
     | '/verify-reset-code'
     | '/profil'
+    | '/daftar-bengkel/status'
     | '/reset-password/new'
     | '/admin/booking'
     | '/admin/cs'
@@ -372,6 +439,8 @@ export interface FileRouteTypes {
     | '/admin/servis'
     | '/admin/sparepart'
     | '/admin/stok'
+    | '/owner/admin'
+    | '/owner/cs'
     | '/owner/dashboard'
     | '/owner/keuntungan'
     | '/owner/pelanggan'
@@ -389,9 +458,13 @@ export interface FileRouteTypes {
     | '/superadmin/dashboard'
     | '/superadmin/error-log'
     | '/superadmin/klien'
+    | '/superadmin/pengajuan-bengkel'
+    | '/admin/undangan/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/accept-invite'
+    | '/daftar-bengkel'
     | '/forgot-password'
     | '/login'
     | '/register'
@@ -399,6 +472,7 @@ export interface FileRouteTypes {
     | '/verify-email'
     | '/verify-reset-code'
     | '/profil'
+    | '/daftar-bengkel/status'
     | '/reset-password/new'
     | '/admin/booking'
     | '/admin/cs'
@@ -410,6 +484,8 @@ export interface FileRouteTypes {
     | '/admin/servis'
     | '/admin/sparepart'
     | '/admin/stok'
+    | '/owner/admin'
+    | '/owner/cs'
     | '/owner/dashboard'
     | '/owner/keuntungan'
     | '/owner/pelanggan'
@@ -427,10 +503,14 @@ export interface FileRouteTypes {
     | '/superadmin/dashboard'
     | '/superadmin/error-log'
     | '/superadmin/klien'
+    | '/superadmin/pengajuan-bengkel'
+    | '/admin/undangan/$token'
   id:
     | '__root__'
     | '/'
     | '/_shell'
+    | '/accept-invite'
+    | '/daftar-bengkel'
     | '/forgot-password'
     | '/login'
     | '/register'
@@ -438,6 +518,7 @@ export interface FileRouteTypes {
     | '/verify-email'
     | '/verify-reset-code'
     | '/_shell/profil'
+    | '/daftar-bengkel/status'
     | '/reset-password/new'
     | '/_shell/admin/booking'
     | '/_shell/admin/cs'
@@ -449,6 +530,8 @@ export interface FileRouteTypes {
     | '/_shell/admin/servis'
     | '/_shell/admin/sparepart'
     | '/_shell/admin/stok'
+    | '/_shell/owner/admin'
+    | '/_shell/owner/cs'
     | '/_shell/owner/dashboard'
     | '/_shell/owner/keuntungan'
     | '/_shell/owner/pelanggan'
@@ -466,17 +549,22 @@ export interface FileRouteTypes {
     | '/_shell/superadmin/dashboard'
     | '/_shell/superadmin/error-log'
     | '/_shell/superadmin/klien'
+    | '/_shell/superadmin/pengajuan-bengkel'
+    | '/admin/undangan/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ShellRoute: typeof ShellRouteWithChildren
+  AcceptInviteRoute: typeof AcceptInviteRoute
+  DaftarBengkelRoute: typeof DaftarBengkelRouteWithChildren
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   LoginRoute: typeof LoginRoute
   RegisterRoute: typeof RegisterRoute
   ResetPasswordRoute: typeof ResetPasswordRouteWithChildren
   VerifyEmailRoute: typeof VerifyEmailRoute
   VerifyResetCodeRoute: typeof VerifyResetCodeRoute
+  AdminUndanganTokenRoute: typeof AdminUndanganTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -493,6 +581,20 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof ShellRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/accept-invite': {
+      id: '/accept-invite'
+      path: '/accept-invite'
+      fullPath: '/accept-invite'
+      preLoaderRoute: typeof AcceptInviteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/daftar-bengkel': {
+      id: '/daftar-bengkel'
+      path: '/daftar-bengkel'
+      fullPath: '/daftar-bengkel'
+      preLoaderRoute: typeof DaftarBengkelRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/forgot-password': {
@@ -543,6 +645,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/profil'
       preLoaderRoute: typeof ShellProfilRouteImport
       parentRoute: typeof ShellRoute
+    }
+    '/daftar-bengkel/status': {
+      id: '/daftar-bengkel/status'
+      path: '/status'
+      fullPath: '/daftar-bengkel/status'
+      preLoaderRoute: typeof DaftarBengkelStatusRouteImport
+      parentRoute: typeof DaftarBengkelRoute
     }
     '/reset-password/new': {
       id: '/reset-password/new'
@@ -619,6 +728,20 @@ declare module '@tanstack/react-router' {
       path: '/admin/stok'
       fullPath: '/admin/stok'
       preLoaderRoute: typeof ShellAdminStokRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/owner/admin': {
+      id: '/_shell/owner/admin'
+      path: '/owner/admin'
+      fullPath: '/owner/admin'
+      preLoaderRoute: typeof ShellOwnerAdminRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/owner/cs': {
+      id: '/_shell/owner/cs'
+      path: '/owner/cs'
+      fullPath: '/owner/cs'
+      preLoaderRoute: typeof ShellOwnerCsRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/owner/dashboard': {
@@ -740,6 +863,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellSuperadminKlienRouteImport
       parentRoute: typeof ShellRoute
     }
+    '/_shell/superadmin/pengajuan-bengkel': {
+      id: '/_shell/superadmin/pengajuan-bengkel'
+      path: '/superadmin/pengajuan-bengkel'
+      fullPath: '/superadmin/pengajuan-bengkel'
+      preLoaderRoute: typeof ShellSuperadminPengajuanBengkelRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/admin/undangan/$token': {
+      id: '/admin/undangan/$token'
+      path: '/admin/undangan/$token'
+      fullPath: '/admin/undangan/$token'
+      preLoaderRoute: typeof AdminUndanganTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -755,6 +892,8 @@ interface ShellRouteChildren {
   ShellAdminServisRoute: typeof ShellAdminServisRoute
   ShellAdminSparepartRoute: typeof ShellAdminSparepartRoute
   ShellAdminStokRoute: typeof ShellAdminStokRoute
+  ShellOwnerAdminRoute: typeof ShellOwnerAdminRoute
+  ShellOwnerCsRoute: typeof ShellOwnerCsRoute
   ShellOwnerDashboardRoute: typeof ShellOwnerDashboardRoute
   ShellOwnerKeuntunganRoute: typeof ShellOwnerKeuntunganRoute
   ShellOwnerPelangganRoute: typeof ShellOwnerPelangganRoute
@@ -772,6 +911,7 @@ interface ShellRouteChildren {
   ShellSuperadminDashboardRoute: typeof ShellSuperadminDashboardRoute
   ShellSuperadminErrorLogRoute: typeof ShellSuperadminErrorLogRoute
   ShellSuperadminKlienRoute: typeof ShellSuperadminKlienRoute
+  ShellSuperadminPengajuanBengkelRoute: typeof ShellSuperadminPengajuanBengkelRoute
 }
 
 const ShellRouteChildren: ShellRouteChildren = {
@@ -786,6 +926,8 @@ const ShellRouteChildren: ShellRouteChildren = {
   ShellAdminServisRoute: ShellAdminServisRoute,
   ShellAdminSparepartRoute: ShellAdminSparepartRoute,
   ShellAdminStokRoute: ShellAdminStokRoute,
+  ShellOwnerAdminRoute: ShellOwnerAdminRoute,
+  ShellOwnerCsRoute: ShellOwnerCsRoute,
   ShellOwnerDashboardRoute: ShellOwnerDashboardRoute,
   ShellOwnerKeuntunganRoute: ShellOwnerKeuntunganRoute,
   ShellOwnerPelangganRoute: ShellOwnerPelangganRoute,
@@ -803,9 +945,22 @@ const ShellRouteChildren: ShellRouteChildren = {
   ShellSuperadminDashboardRoute: ShellSuperadminDashboardRoute,
   ShellSuperadminErrorLogRoute: ShellSuperadminErrorLogRoute,
   ShellSuperadminKlienRoute: ShellSuperadminKlienRoute,
+  ShellSuperadminPengajuanBengkelRoute: ShellSuperadminPengajuanBengkelRoute,
 }
 
 const ShellRouteWithChildren = ShellRoute._addFileChildren(ShellRouteChildren)
+
+interface DaftarBengkelRouteChildren {
+  DaftarBengkelStatusRoute: typeof DaftarBengkelStatusRoute
+}
+
+const DaftarBengkelRouteChildren: DaftarBengkelRouteChildren = {
+  DaftarBengkelStatusRoute: DaftarBengkelStatusRoute,
+}
+
+const DaftarBengkelRouteWithChildren = DaftarBengkelRoute._addFileChildren(
+  DaftarBengkelRouteChildren,
+)
 
 interface ResetPasswordRouteChildren {
   ResetPasswordNewRoute: typeof ResetPasswordNewRoute
@@ -822,12 +977,15 @@ const ResetPasswordRouteWithChildren = ResetPasswordRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ShellRoute: ShellRouteWithChildren,
+  AcceptInviteRoute: AcceptInviteRoute,
+  DaftarBengkelRoute: DaftarBengkelRouteWithChildren,
   ForgotPasswordRoute: ForgotPasswordRoute,
   LoginRoute: LoginRoute,
   RegisterRoute: RegisterRoute,
   ResetPasswordRoute: ResetPasswordRouteWithChildren,
   VerifyEmailRoute: VerifyEmailRoute,
   VerifyResetCodeRoute: VerifyResetCodeRoute,
+  AdminUndanganTokenRoute: AdminUndanganTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

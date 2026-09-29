@@ -4,16 +4,17 @@ import { CustomerServicePage } from "@/components/customer-service";
 export const Route = createFileRoute("/_shell/pelanggan/cs")({
   head: () => ({
     meta: [
-      { title: "Customer Service — AppBenk" },
+      { title: "Hubungi Pengembang AppBenk (Developer Support)" },
       {
         name: "description",
         content:
-          "Hubungi tim AppBenk untuk bantuan penggunaan aplikasi: kirim pertanyaan, laporkan masalah, dan pantau status tiket Anda.",
+          "Sampaikan kendala teknis sistem, bug aplikasi, atau pertanyaan integrasi langsung ke Tim Pengembang Platform AppBenk.",
       },
-      { property: "og:title", content: "Customer Service — AppBenk" },
+      { property: "og:title", content: "Hubungi Pengembang AppBenk (Developer Support)" },
       {
         property: "og:description",
-        content: "Bantuan penggunaan aplikasi AppBenk untuk pelanggan.",
+        content:
+          "Sampaikan kendala teknis sistem, bug aplikasi, atau pertanyaan integrasi langsung ke Tim Pengembang Platform AppBenk.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },

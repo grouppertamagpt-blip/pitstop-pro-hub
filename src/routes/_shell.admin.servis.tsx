@@ -82,6 +82,23 @@ export const Route = createFileRoute("/_shell/admin/servis")({
   component: ServisAdmin,
 });
 
+function toDateTimeLocal(isoStr?: string | null): string {
+  if (!isoStr) return "";
+  try {
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return "";
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const year = d.getFullYear();
+    const month = pad(d.getMonth() + 1);
+    const day = pad(d.getDate());
+    const hours = pad(d.getHours());
+    const minutes = pad(d.getMinutes());
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  } catch {
+    return "";
+  }
+}
+
 const kosong = {
   pelanggan: "",
   telepon: "",
@@ -96,6 +113,8 @@ const kosong = {
   catatan: "",
   biayaJasa: 0,
   items: [] as ItemPart[],
+  estimasiSelesai: "",
+  estimasiWaktu: "45 - 60 Menit",
 };
 
 function ServisAdmin() {
@@ -119,7 +138,25 @@ function ServisAdmin() {
   useEffect(() => {
     refreshServis?.();
     refreshMekanik?.();
-  }, []);
+
+    const handleSync = () => {
+      refreshServis?.();
+      refreshMekanik?.();
+    };
+
+    window.addEventListener("appbenk_servis_updated", handleSync);
+    window.addEventListener("appbenk_pembayaran_updated", handleSync);
+    window.addEventListener("appbenk_sparepart_updated", handleSync);
+
+    const interval = setInterval(handleSync, 12000);
+
+    return () => {
+      window.removeEventListener("appbenk_servis_updated", handleSync);
+      window.removeEventListener("appbenk_pembayaran_updated", handleSync);
+      window.removeEventListener("appbenk_sparepart_updated", handleSync);
+      clearInterval(interval);
+    };
+  }, [refreshServis, refreshMekanik]);
 
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"semua" | StatusServis>("semua");
@@ -186,6 +223,8 @@ function ServisAdmin() {
       ...kosong,
       mekanik: mekanikOpsi[0]?.nama || "Andi",
       tanggal: new Date().toISOString().slice(0, 10),
+      estimasiSelesai: "",
+      estimasiWaktu: "45 - 60 Menit",
     });
     setModePelanggan(pelanggan.length > 0 ? "pilih" : "manual");
     setOpen(true);
@@ -210,6 +249,8 @@ function ServisAdmin() {
       catatan: s.catatan,
       biayaJasa: s.biayaJasa,
       items: s.items.map((i) => ({ ...i })),
+      estimasiSelesai: toDateTimeLocal(s.estimasiSelesai),
+      estimasiWaktu: s.estimasiWaktu || (s as any).estimasiDurasi || "45 - 60 Menit",
     });
     setModePelanggan(p ? "pilih" : "manual");
     setPilihPart("");
@@ -259,6 +300,10 @@ function ServisAdmin() {
     }
     setLoadingSimpan(true);
     try {
+      const estimasiSelesaiIso = form.estimasiSelesai
+        ? new Date(form.estimasiSelesai).toISOString()
+        : undefined;
+
       await simpanServis(
         edit
           ? {
@@ -267,8 +312,17 @@ function ServisAdmin() {
               nomor: edit.nomor,
               bengkelId: edit.bengkelId || bengkelAktifId,
               bookingId: edit.bookingId,
+              estimasiSelesai: estimasiSelesaiIso,
+              estimasiWaktu: form.estimasiWaktu,
+              estimasiDurasi: form.estimasiWaktu,
             }
-          : { ...form, bengkelId: bengkelAktifId },
+          : {
+              ...form,
+              bengkelId: bengkelAktifId,
+              estimasiSelesai: estimasiSelesaiIso,
+              estimasiWaktu: form.estimasiWaktu,
+              estimasiDurasi: form.estimasiWaktu,
+            },
       );
       toast.success(edit ? "Data servis berhasil diperbarui" : "Servis baru berhasil dibuat");
       setOpen(false);
@@ -369,6 +423,11 @@ function ServisAdmin() {
                           <span className="block text-xs text-muted-foreground">
                             {tanggalPanjang(s.tanggal)}
                           </span>
+                          {s.estimasiSelesai && (
+                            <span className="block text-[11px] text-primary font-normal">
+                              Target: {new Date(s.estimasiSelesai).toLocaleDateString("id-ID", { day: "numeric", month: "short" })}, {new Date(s.estimasiSelesai).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }).replace(".", ":")} WIB
+                            </span>
+                          )}
                         </TableCell>
                         <TableCell>{s.pelanggan}</TableCell>
                         <TableCell className="text-muted-foreground">
@@ -762,6 +821,34 @@ function ServisAdmin() {
                       {s}
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Estimasi Selesai</Label>
+              <Input
+                type="datetime-local"
+                value={form.estimasiSelesai}
+                onChange={(e) => setForm({ ...form, estimasiSelesai: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Estimasi Durasi</Label>
+              <Select
+                value={form.estimasiWaktu}
+                onValueChange={(v) => setForm({ ...form, estimasiWaktu: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Pilih durasi pengerjaan" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="30 Menit">30 Menit</SelectItem>
+                  <SelectItem value="45 - 60 Menit">45 - 60 Menit</SelectItem>
+                  <SelectItem value="1 - 2 Jam">1 - 2 Jam</SelectItem>
+                  <SelectItem value="2 - 4 Jam">2 - 4 Jam</SelectItem>
+                  <SelectItem value="> 4 Jam">&gt; 4 Jam</SelectItem>
+                  <SelectItem value="1 Hari Kerja">1 Hari Kerja</SelectItem>
+                  <SelectItem value="> 1 Hari Kerja">&gt; 1 Hari Kerja</SelectItem>
                 </SelectContent>
               </Select>
             </div>

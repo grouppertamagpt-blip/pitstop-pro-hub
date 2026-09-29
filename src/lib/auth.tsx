@@ -14,13 +14,14 @@ import {
   FileBarChart,
   LineChart,
   Users,
-  Crown,
   Car,
   ShoppingCart,
   LifeBuoy,
   Settings2,
   Building2,
+  ClipboardCheck,
   ShieldAlert,
+  ClipboardList,
   type LucideIcon,
 } from "lucide-react";
 
@@ -69,7 +70,7 @@ export const NAV_ROLE: Record<Role, NavItem[]> = {
     { to: "/pelanggan/estimasi", label: "Estimasi Servis", icon: Calculator },
     { to: "/pelanggan/pembayaran", label: "Pembayaran", icon: Wallet },
     { to: "/pelanggan/riwayat", label: "Riwayat Servis", icon: History },
-    { to: "/pelanggan/cs", label: "Customer Service", icon: LifeBuoy },
+    { to: "/pelanggan/cs", label: "Developer Support", icon: LifeBuoy },
     { to: "/profil", label: "Profile", icon: UserCircle2 },
   ],
   admin: [
@@ -79,9 +80,9 @@ export const NAV_ROLE: Record<Role, NavItem[]> = {
     { to: "/admin/pembayaran", label: "Pembayaran", icon: Wallet },
     { to: "/admin/mekanik", label: "Kelola Mekanik", icon: Users },
     { to: "/admin/sparepart", label: "Kelola Sparepart", icon: Package },
-    { to: "/admin/stok", label: "Pembelian & Stok", icon: ShoppingCart },
+    { to: "/admin/stok", label: "Catatan Stok", icon: ClipboardList },
     { to: "/admin/laporan", label: "Laporan & Data", icon: FileBarChart },
-    { to: "/admin/cs", label: "Customer Service", icon: LifeBuoy },
+    { to: "/admin/cs", label: "Developer Support", icon: LifeBuoy },
     { to: "/admin/pengaturan", label: "Pengaturan Integrasi", icon: Settings2 },
     { to: "/profil", label: "Profile", icon: UserCircle2 },
   ],
@@ -94,20 +95,21 @@ export const NAV_ROLE: Record<Role, NavItem[]> = {
     { to: "/admin/pembayaran", label: "Pembayaran", icon: Wallet },
     { to: "/admin/mekanik", label: "Kelola Mekanik", icon: Users },
     { to: "/admin/sparepart", label: "Kelola Sparepart", icon: Package },
-    { to: "/admin/stok", label: "Pembelian & Stok", icon: ShoppingCart },
+    { to: "/admin/stok", label: "Catatan Stok", icon: ClipboardList },
     { to: "/admin/laporan", label: "Laporan & Data", icon: FileBarChart },
     { to: "/owner/servis", label: "Laporan Servis", icon: LineChart },
     { to: "/owner/sparepart", label: "Laporan Sparepart", icon: Package },
     { to: "/owner/pelanggan", label: "Laporan Pelanggan", icon: Users },
-    { to: "/owner/keuntungan", label: "Laporan Keuntungan", icon: Crown, premium: true },
-    { to: "/admin/pengaturan", label: "Pengaturan Integrasi", icon: Settings2 },
-    { to: "/admin/cs", label: "Customer Service", icon: LifeBuoy },
+    { to: "/owner/admin", label: "Kelola Admin", icon: Users },
+    { to: "/admin/pengaturan", label: "Pengaturan Bengkel", icon: Settings2 },
+    { to: "/admin/cs", label: "Developer Support", icon: LifeBuoy },
     { to: "/profil", label: "Profile", icon: UserCircle2 },
   ],
 
   super_admin: [
     { to: "/superadmin/dashboard", label: "Dashboard Utama", icon: LayoutDashboard },
     { to: "/superadmin/klien", label: "Manajemen Klien", icon: Building2 },
+    { to: "/superadmin/pengajuan-bengkel", label: "Pengajuan Bengkel", icon: ClipboardCheck },
     { to: "/superadmin/error-log", label: "Monitor Error", icon: ShieldAlert },
     { to: "/superadmin/cs", label: "Manajemen Tiket", icon: LifeBuoy },
     { to: "/profil", label: "Profile", icon: UserCircle2 },
@@ -136,7 +138,7 @@ export const NAV_GROUPS: Record<Role, NavGroup[]> = {
         { to: "/admin/pembayaran", label: "Pembayaran", icon: Wallet },
         { to: "/admin/mekanik", label: "Kelola Mekanik", icon: Users },
         { to: "/admin/sparepart", label: "Kelola Sparepart", icon: Package },
-        { to: "/admin/stok", label: "Pembelian & Stok", icon: ShoppingCart },
+        { to: "/admin/stok", label: "Catatan Stok", icon: ClipboardList },
       ],
     },
     {
@@ -146,14 +148,14 @@ export const NAV_GROUPS: Record<Role, NavGroup[]> = {
         { to: "/owner/servis", label: "Laporan Servis", icon: LineChart },
         { to: "/owner/sparepart", label: "Laporan Sparepart", icon: Package },
         { to: "/owner/pelanggan", label: "Laporan Pelanggan", icon: Users },
-        { to: "/owner/keuntungan", label: "Laporan Keuntungan", icon: Crown, premium: true },
       ],
     },
     {
       label: "Pengaturan & Sistem",
       items: [
-        { to: "/admin/pengaturan", label: "Pengaturan Integrasi", icon: Settings2 },
-        { to: "/admin/cs", label: "Customer Service", icon: LifeBuoy },
+        { to: "/owner/admin", label: "Kelola Admin", icon: Users },
+        { to: "/admin/pengaturan", label: "Pengaturan Bengkel", icon: Settings2 },
+        { to: "/admin/cs", label: "Developer Support", icon: LifeBuoy },
         ITEM_PROFIL,
       ],
     },
@@ -163,6 +165,7 @@ export const NAV_GROUPS: Record<Role, NavGroup[]> = {
       items: [
         { to: "/superadmin/dashboard", label: "Dashboard Utama", icon: LayoutDashboard },
         { to: "/superadmin/klien", label: "Manajemen Klien", icon: Building2 },
+        { to: "/superadmin/pengajuan-bengkel", label: "Pengajuan Bengkel", icon: ClipboardCheck },
         { to: "/superadmin/error-log", label: "Monitor Error", icon: ShieldAlert },
         { to: "/superadmin/cs", label: "Manajemen Tiket", icon: LifeBuoy },
         ITEM_PROFIL,
@@ -263,8 +266,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (ownerRow) {
           resolvedRole = "owner";
+          const isFandi =
+            (data.email && data.email.toLowerCase().includes("fandi")) ||
+            (displayName && displayName.toLowerCase().includes("fandi")) ||
+            (ownerRow.nama && ownerRow.nama.toLowerCase().includes("fandi"));
           activeBengkelId =
-            ownerRow.workshop_id ?? ownerRow.id_bengkel ?? activeBengkelId ?? "bengkel-001";
+            ownerRow.workshop_id ?? ownerRow.id_bengkel ?? (isFandi ? "bengkel-2307" : activeBengkelId ?? "bengkel-001");
           if (
             ownerRow.nama &&
             (!data.full_name || data.full_name.toLowerCase() === "owner" || data.full_name === "User")
@@ -453,7 +460,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             .maybeSingle();
           if (ownerRow) {
             metaRole = "owner";
-            metaBengkel = ownerRow.workshop_id ?? ownerRow.id_bengkel ?? "bengkel-001";
+            const isFandi =
+              (authUser.email && authUser.email.toLowerCase().includes("fandi")) ||
+              (metaName && metaName.toLowerCase().includes("fandi")) ||
+              (ownerRow.nama && ownerRow.nama.toLowerCase().includes("fandi"));
+            metaBengkel = ownerRow.workshop_id ?? ownerRow.id_bengkel ?? (isFandi ? "bengkel-2307" : "bengkel-001");
             if (ownerRow.nama) metaName = ownerRow.nama;
             if (ownerRow.no_hp) metaPhone = ownerRow.no_hp;
           } else {

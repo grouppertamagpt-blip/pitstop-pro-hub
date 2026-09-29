@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   Users,
   Plus,
@@ -104,6 +104,10 @@ function KelolaMekanikAdmin() {
   const bengkelAktifId = user?.bengkelId || "bengkel-001";
   const bengkelData = bengkel.find((b) => b.id === bengkelAktifId);
   const namaBengkel = bengkelData ? bengkelData.nama : "Bengkel Pusat";
+
+  useEffect(() => {
+    refreshMekanik(bengkelAktifId);
+  }, [bengkelAktifId, refreshMekanik]);
 
   // Filter mekanik hanya untuk bengkel ini (ISOLASI MULTI-BENGKEL)
   const mekanikBengkel = useMemo(() => {
@@ -250,6 +254,7 @@ function KelolaMekanikAdmin() {
         toast.success(`Mekanik baru ${form.nama} berhasil disimpan ke database Supabase (${namaBengkel}).`);
       }
       setOpen(false);
+      await refreshMekanik(bengkelAktifId);
     } catch (err: any) {
       console.error("Error saving mekanik:", err);
       toast.error(`Gagal menyimpan data mekanik: ${err?.message || "Terjadi kesalahan database"}`);

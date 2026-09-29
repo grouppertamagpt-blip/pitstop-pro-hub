@@ -94,10 +94,18 @@ function BookingAdmin() {
 
   useEffect(() => {
     refreshBooking().catch(() => {});
-    const interval = setInterval(() => {
+
+    const handleSync = () => {
       refreshBooking().catch(() => {});
-    }, 5000);
-    return () => clearInterval(interval);
+    };
+
+    window.addEventListener("appbenk_booking_updated", handleSync);
+
+    const interval = setInterval(handleSync, 8000);
+    return () => {
+      window.removeEventListener("appbenk_booking_updated", handleSync);
+      clearInterval(interval);
+    };
   }, [refreshBooking]);
 
   const mekanikBengkelAktif = useMemo(() => {

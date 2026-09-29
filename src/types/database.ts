@@ -75,6 +75,20 @@ export interface WorkshopPaymentAccountRow {
 
 export type NotificationChannel = "EMAIL" | "WHATSAPP" | "IN_APP" | "in_app";
 
+export type TipeNotifikasi = "booking" | "servis" | "pembayaran" | "info";
+
+export interface NotifikasiRow {
+  id: string;
+  user_id: string;
+  bengkel_id?: string | null;
+  judul: string;
+  pesan: string;
+  tipe: TipeNotifikasi;
+  tautan_url?: string | null;
+  is_read: boolean;
+  created_at: string;
+}
+
 export interface NotificationLogRow {
   id: string;
   workshop_id?: string | null;
@@ -102,6 +116,9 @@ export interface BengkelRow {
   nama_bengkel: string;
   alamat: string | null;
   no_telepon: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  jam_operasional?: string | null;
   paket?: PaketBengkel;
   status?: StatusKlien;
   owner_nama?: string | null;
@@ -658,4 +675,41 @@ export interface SystemLogRow {
   stack_trace?: string | null;
   status: StatusSystemLog;
   created_at: string;
+}
+
+export type StatusWorkshopApplication = "PENDING" | "APPROVED" | "REJECTED";
+
+export interface WorkshopApplicationRow {
+  id: string;
+  user_id: string;
+  nama_bengkel: string;
+  alamat: string;
+  no_telepon: string;
+  owner_nama: string;
+  owner_email: string;
+  paket: "Basic" | "Premium";
+  status: StatusWorkshopApplication;
+  catatan_review?: string | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  bengkel_id_result?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type StatusAdminInvitation = "pending" | "accepted" | "expired" | "cancelled";
+
+export interface AdminInvitationRow {
+  id: string;
+  id_bengkel: string;
+  email: string;
+  nama: string;
+  token: string;
+  created_by: string;
+  expires_at: string;
+  status: StatusAdminInvitation;
+  accepted_by?: string | null;
+  accepted_at?: string | null;
+  created_at: string;
+  updated_at: string;
 }

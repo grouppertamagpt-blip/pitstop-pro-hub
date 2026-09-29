@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
+  Building2,
   CheckCircle2,
   Eye,
   EyeOff,
@@ -332,6 +333,18 @@ function RegisterPage() {
               Login
             </Link>
           </p>
+
+          <div className="pt-3 border-t text-center">
+            <p className="text-xs text-muted-foreground">
+              Pemilik bengkel? Kembangkan usaha bengkel Anda bersama kami.
+            </p>
+            <Link
+              to="/daftar-bengkel"
+              className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline underline-offset-4"
+            >
+              <Building2 className="size-3.5" /> Daftarkan Bengkel Anda sebagai Mitra
+            </Link>
+          </div>
         </form>
       </div>
     </AuthLayout>

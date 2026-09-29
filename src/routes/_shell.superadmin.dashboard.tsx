@@ -4,7 +4,6 @@ import {
   Building2,
   Users,
   ShieldCheck,
-  Crown,
   LifeBuoy,
   ShieldAlert,
   Activity,
@@ -94,21 +93,12 @@ function SuperAdminDashboard() {
       to: "/superadmin/klien",
     },
     {
-      label: "Bengkel Basic",
-      value: stats.bengkelBasic,
+      label: "Bengkel Aktif",
+      value: stats.totalBengkel,
       icon: ShieldCheck,
       color: "text-slate-500",
       bg: "bg-slate-500/10",
-      hint: "Paket standar",
-      to: "/superadmin/klien",
-    },
-    {
-      label: "Bengkel Premium",
-      value: stats.bengkelPremium,
-      icon: Crown,
-      color: "text-amber-500",
-      bg: "bg-amber-500/10",
-      hint: "Fitur analitik penuh",
+      hint: "Paket standar operasional",
       to: "/superadmin/klien",
     },
     {
@@ -131,9 +121,6 @@ function SuperAdminDashboard() {
     },
   ];
 
-  const basicPercentage = Math.round((stats.bengkelBasic / Math.max(1, stats.totalBengkel)) * 100);
-  const premiumPercentage = 100 - basicPercentage;
-
   return (
     <>
       <PageHeader
@@ -141,8 +128,8 @@ function SuperAdminDashboard() {
         description="Pusat kendali ekosistem platform multi-tenant AppBenk, pemantauan klien, tiket bantuan, dan integritas sistem."
       />
 
-      {/* Grid 6 Kartu Statistik */}
-      <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      {/* Grid 5 Kartu Statistik */}
+      <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {statCards.map((c) => (
           <Link key={c.label} to={c.to} className="group">
             <Card className="h-full border transition-all hover:border-primary/50 hover:shadow-sm">
@@ -169,19 +156,19 @@ function SuperAdminDashboard() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
-        {/* Grafik & Pembagian Paket */}
+        {/* Status Paket & Pertumbuhan */}
         <div className="space-y-4">
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="text-base">Distribusi Paket Klien Bengkel</CardTitle>
+                  <CardTitle className="text-base">Status Layanan Kemitraan Bengkel</CardTitle>
                   <p className="text-xs text-muted-foreground">
-                    Perbandingan bengkel aktif paket Basic vs Premium
+                    Seluruh bengkel mitra beroperasi dengan Paket Basic (Standar Operasional)
                   </p>
                 </div>
                 <Badge variant="outline" className="gap-1 border-primary/30 text-primary">
-                  <Crown className="size-3" /> {stats.bengkelPremium} Premium
+                  <ShieldCheck className="size-3" /> {stats.totalBengkel} Bengkel Aktif
                 </Badge>
               </div>
             </CardHeader>
@@ -189,45 +176,29 @@ function SuperAdminDashboard() {
               <div>
                 <div className="mb-2 flex items-center justify-between text-xs font-medium">
                   <span className="flex items-center gap-1.5 text-muted-foreground">
-                    <span className="size-2.5 rounded-full bg-slate-400" /> Basic ({stats.bengkelBasic} bengkel)
+                    <span className="size-2.5 rounded-full bg-primary" /> Paket Basic Standar ({stats.totalBengkel} bengkel mitra)
                   </span>
-                  <span className="flex items-center gap-1.5 font-bold text-amber-600 dark:text-amber-400">
-                    <span className="size-2.5 rounded-full bg-amber-500" /> Premium ({stats.bengkelPremium} bengkel)
-                  </span>
+                  <span className="text-xs font-semibold text-primary">100% Aktif</span>
                 </div>
-                <div className="flex h-4 w-full overflow-hidden rounded-full bg-muted">
+                <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted">
                   <div
-                    style={{ width: `${basicPercentage}%` }}
-                    className="bg-slate-400 transition-all"
-                  />
-                  <div
-                    style={{ width: `${premiumPercentage}%` }}
-                    className="bg-amber-500 transition-all"
+                    style={{ width: "100%" }}
+                    className="bg-primary transition-all"
                   />
                 </div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-lg border bg-card p-3.5">
-                  <p className="text-xs text-muted-foreground">Paket Basic (Free Tier)</p>
-                  <p className="mt-1 font-display text-xl font-bold">{stats.bengkelBasic} Bengkel</p>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    Operasional standar, booking, stok, pembayaran
-                  </p>
-                </div>
-                <div className="rounded-lg border border-amber-500/20 bg-amber-50/20 p-3.5 dark:bg-amber-950/10">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold text-amber-700 dark:text-amber-300">
-                      Paket Premium
+              <div className="rounded-lg border bg-card p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold text-foreground">Paket Basic (Standard Platform)</p>
+                    <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                      Standar penuh seluruh mitra: manajemen servis &amp; antrean, booking online pelanggan, inventori sparepart, kasir &amp; transaksi kas, serta invoice digital.
                     </p>
-                    <Crown className="size-3.5 text-amber-500" />
                   </div>
-                  <p className="mt-1 font-display text-xl font-bold text-amber-700 dark:text-amber-300">
-                    {stats.bengkelPremium} Bengkel
-                  </p>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    Laporan keuangan & keuntungan terbuka
-                  </p>
+                  <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <ShieldCheck className="size-5" />
+                  </div>
                 </div>
               </div>
 

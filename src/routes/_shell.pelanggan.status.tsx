@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { Activity, CheckCircle2, CreditCard, ArrowRight, Receipt } from "lucide-react";
 import { PageHeader, EmptyState } from "@/components/page-header";
 import { StatusBadge, BookingBadge } from "@/components/status-badge";
@@ -28,7 +29,32 @@ export const Route = createFileRoute("/_shell/pelanggan/status")({
 
 function StatusPelanggan() {
   const { user } = useAuth();
-  const { servis, booking } = useStore();
+  const { servis, booking, refreshServis, refreshBooking } = useStore();
+
+  // Auto-update & Realtime listener untuk status pengerjaan servis pelanggan
+  useEffect(() => {
+    refreshServis?.().catch(() => {});
+    refreshBooking?.().catch(() => {});
+
+    const handleSync = () => {
+      refreshServis?.().catch(() => {});
+      refreshBooking?.().catch(() => {});
+    };
+
+    window.addEventListener("appbenk_servis_updated", handleSync);
+    window.addEventListener("appbenk_booking_updated", handleSync);
+    window.addEventListener("appbenk_pembayaran_updated", handleSync);
+
+    // Polling fallback setiap 10 detik saat pelanggan memantau progres servis
+    const interval = setInterval(handleSync, 10000);
+
+    return () => {
+      window.removeEventListener("appbenk_servis_updated", handleSync);
+      window.removeEventListener("appbenk_booking_updated", handleSync);
+      window.removeEventListener("appbenk_pembayaran_updated", handleSync);
+      clearInterval(interval);
+    };
+  }, [refreshServis, refreshBooking]);
   const userNamaLower = (user?.nama || "").trim().toLowerCase();
   const userPelangganLower = (user?.pelanggan || "").trim().toLowerCase();
   const authId = user?.id;

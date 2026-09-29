@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import {
   LifeBuoy,
   MessageSquare,
@@ -10,6 +10,13 @@ import {
   HelpCircle,
   Eye,
   RefreshCw,
+  Building2,
+  ShieldAlert,
+  Code2,
+  Share2,
+  Instagram,
+  ExternalLink,
+  MessageCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader, EmptyState } from "@/components/page-header";
@@ -38,6 +45,14 @@ import { useStore, tanggalPanjang } from "@/lib/store";
 import { customerServiceTicketService } from "@/services/appbenk-service";
 import type { CSTicketRow, CSMessageRow, StatusCSTicket } from "@/types/database";
 
+function TikTokIcon({ className = "size-3.5" }: { className?: string }) {
+  return (
+    <svg className={className} fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.298-.002.595.042.88.13V9.4a6.33 6.33 0 0 0-1-.08A6.34 6.34 0 0 0 3 15.66a6.34 6.34 0 0 0 10.82 4.49 6.27 6.27 0 0 0 1.95-4.57V8.58a8.28 8.28 0 0 0 4.82 1.56V6.69z" />
+    </svg>
+  );
+}
+
 const STATUS_BADGES: Record<string, { class: string; label: string }> = {
   Baru: {
     class: "border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300 font-semibold",
@@ -61,31 +76,85 @@ const STATUS_BADGES: Record<string, { class: string; label: string }> = {
   },
 };
 
-const KATEGORI_PILIHAN = [
-  "Bug / Error",
-  "Pembayaran",
-  "Booking Servis",
-  "Akun / Login",
-  "Fitur Aplikasi",
-  "Google Maps",
-  "Pertanyaan",
+const KATEGORI_TIKET = [
+  "Bug / Error Aplikasi",
+  "Kendala Transaksi / Pembayaran Sistem",
+  "Kendala Booking Servis",
+  "Permintaan Fitur / Integrasi",
+  "Pertanyaan Operasional",
   "Lainnya",
-];
-
-const KANAL = [
-  {
-    icon: Phone,
-    judul: "Hubungi Customer Service",
-    detail: "0800-1234-5678 · Senin–Sabtu, 08.00–17.00 WIB",
-  },
-  { icon: MessageSquare, judul: "Chat / Tiket Bantuan", detail: "Kirim pesan lewat formulir di samping" },
-  { icon: LifeBuoy, judul: "Pertanyaan Operasional", detail: "Konsultasi seputar fitur & panduan aplikasi" },
-  { icon: AlertTriangle, judul: "Laporkan Bug / Kendala", detail: "Kendala teknis langsung diteruskan ke tim pengembang" },
 ];
 
 export function CustomerServicePage() {
   const { user } = useAuth();
-  const { bengkelAktif } = useStore();
+  const { activeBengkel } = useStore();
+
+  const isAdminOrOwner =
+    user?.role === "admin" || user?.role === "owner" || user?.role === "admin_bengkel";
+
+  const resolvedRole = useMemo(() => {
+    if (!user) return "pelanggan";
+    const r = (user.role || "").toLowerCase();
+    if (r.includes("admin")) return "admin_bengkel";
+    if (r.includes("owner")) return "owner";
+    return "pelanggan";
+  }, [user]);
+
+  const activeRoleBadge = useMemo(() => {
+    if (resolvedRole === "admin_bengkel") {
+      return {
+        label: "Admin Bengkel",
+        class: "border-purple-300/80 bg-purple-100/70 text-purple-700 dark:border-purple-800 dark:bg-purple-950/60 dark:text-purple-300",
+      };
+    }
+    if (resolvedRole === "owner") {
+      return {
+        label: "Owner Bengkel",
+        class: "border-amber-300/80 bg-amber-100/70 text-amber-700 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-300",
+      };
+    }
+    return {
+      label: "Pelanggan",
+      class: "border-blue-300/80 bg-blue-100/70 text-blue-700 dark:border-blue-800 dark:bg-blue-950/60 dark:text-blue-300",
+    };
+  }, [resolvedRole]);
+
+  const isAnzar =
+    (user?.email && user.email.toLowerCase().includes("anzar")) ||
+    (user?.nama && user.nama.toLowerCase().includes("anzar")) ||
+    user?.id === "usr-demo-1";
+
+  const activeWorkshopName = isAnzar
+    ? "Bengkel Fandi Motor"
+    : activeBengkel?.nama || "Bengkel Fandi Motor";
+  const activeWorkshopId = isAnzar
+    ? "bengkel-2307"
+    : activeBengkel?.id || "bengkel-2307";
+
+  const activeUserName =
+    user?.nama ||
+    (isAnzar
+      ? "Anzar Amanah"
+      : user?.email
+        ? user.email.split("@")[0]
+        : resolvedRole === "pelanggan"
+          ? "Pelanggan"
+          : "Admin Bengkel");
+  const activeUserEmail = user?.email || (isAnzar ? "anzaramanah@gmail.com" : "");
+
+  const getTicketBengkel = (t?: CSTicketRow | null) => {
+    if (!t) return "Bengkel Fandi Motor";
+    if (
+      (t.user_email && t.user_email.toLowerCase().includes("anzar")) ||
+      (t.user_name && t.user_name.toLowerCase().includes("anzar")) ||
+      t.bengkel_id === "bengkel-2307"
+    ) {
+      return "Bengkel Fandi Motor";
+    }
+    return t.bengkel_nama || "Bengkel Fandi Motor";
+  };
+
+  const kategoriList = KATEGORI_TIKET;
 
   const [form, setForm] = useState({ subjek: "", kategori: "", pesan: "" });
   const [err, setErr] = useState<Partial<Record<keyof typeof form, string>>>({});
@@ -105,8 +174,17 @@ export function CustomerServicePage() {
   const loadMyTickets = async () => {
     if (!user) return;
     try {
-      const tickets = await customerServiceTicketService.getMyTickets(user.id, user.email);
-      setMyTickets(tickets);
+      const tickets = await customerServiceTicketService.getMyTickets(
+        user.id,
+        user.email,
+        activeWorkshopId,
+      );
+      const cleaned = tickets.filter(
+        (t) =>
+          t.id !== "cs-mock-1" &&
+          !t.pesan?.includes("upload bukti pembayaran QRIS tapi status masih menunggu"),
+      );
+      setMyTickets(cleaned);
     } catch (e) {
       console.error(e);
     } finally {
@@ -116,7 +194,7 @@ export function CustomerServicePage() {
 
   useEffect(() => {
     loadMyTickets();
-  }, [user]);
+  }, [user, activeWorkshopId]);
 
   const openTicketDetail = async (ticket: CSTicketRow) => {
     setSelectedTicket(ticket);
@@ -142,7 +220,7 @@ export function CustomerServicePage() {
     e.preventDefault();
     const next: typeof err = {};
     if (!form.subjek.trim()) next.subjek = "Subjek wajib diisi.";
-    if (!form.kategori) next.kategori = "Pilih kategori masalah.";
+    if (!form.kategori) next.kategori = "Pilih tipe kendala.";
     if (!form.pesan.trim()) next.pesan = "Pesan wajib diisi.";
     setErr(next);
     if (Object.keys(next).length > 0) return;
@@ -156,19 +234,24 @@ export function CustomerServicePage() {
     try {
       const created = await customerServiceTicketService.createTicket({
         userId: user.id,
-        userName: user.nama || "Pengguna AppBenk",
-        userEmail: user.email || "",
-        userRole: user.role,
-        bengkelId: bengkelAktif?.id,
-        bengkelNama: bengkelAktif?.nama,
+        userName: activeUserName,
+        userEmail: activeUserEmail,
+        userRole: resolvedRole,
+        bengkelId: activeWorkshopId,
+        bengkelNama: activeWorkshopName,
         subjek: form.subjek.trim(),
         kategori: form.kategori,
         pesan: form.pesan.trim(),
       });
 
-      toast.success(`Pesan berhasil dikirim — Tiket ${created.ticket_number || "CS-Baru"}`);
+      // Update state instan agar langsung muncul di "Tiket Saya" tanpa delay
+      setMyTickets((prev) => [created, ...prev.filter((t) => t.id !== created.id)]);
+
+      toast.success(
+        `Laporan kendala berhasil dikirim ke Tim Pengembang — Tiket ${created.ticket_number || "CS-Baru"}`
+      );
       setForm({ subjek: "", kategori: "", pesan: "" });
-      loadMyTickets();
+      await loadMyTickets();
     } catch (e: any) {
       toast.error(e?.message || "Gagal mengirim tiket bantuan.");
     } finally {
@@ -206,8 +289,8 @@ export function CustomerServicePage() {
   return (
     <>
       <PageHeader
-        title="Customer Service AppBenk"
-        description="Pusat bantuan & pelaporan kendala teknis. Ajukan pertanyaan, laporkan bug, atau sampaikan saran langsung ke tim pengelola platform AppBenk."
+        title="Hubungi Pengembang AppBenk (Developer Support)"
+        description="Sampaikan kendala teknis sistem, bug aplikasi, atau pertanyaan integrasi langsung ke Tim Pengembang Platform AppBenk."
         action={
           <Button variant="outline" size="sm" onClick={loadMyTickets} className="gap-2 text-xs">
             <RefreshCw className="size-3.5" /> Segarkan
@@ -215,53 +298,139 @@ export function CustomerServicePage() {
         }
       />
 
+      {/* BANNER KONTEKS SESI PELAPOR & BENGKEL AKTIF */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-purple-200/80 bg-purple-50/70 p-3.5 text-xs dark:border-purple-900/60 dark:bg-purple-950/30">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex size-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="text-muted-foreground">Sesi Pelapor:</span>
+          <strong className="text-foreground">
+            {activeUserName} {activeUserEmail && `(${activeUserEmail})`}
+          </strong>
+          <span className="text-muted-foreground">•</span>
+          <span className="text-muted-foreground">Peran:</span>
+          <Badge variant="outline" className={`text-[10px] px-2 py-0.5 font-medium ${activeRoleBadge.class}`}>
+            {activeRoleBadge.label}
+          </Badge>
+        </div>
+        <div className="flex items-center gap-1.5 font-medium text-foreground bg-background/80 dark:bg-muted/60 px-2.5 py-1 rounded border">
+          <Building2 className="size-3.5 text-primary shrink-0" />
+          <span>Bengkel Terkait: <strong>{activeWorkshopName}</strong></span>
+        </div>
+      </div>
+
       <div className="grid gap-4 lg:grid-cols-[1fr_1.1fr]">
         <div className="space-y-4">
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Kanal Bantuan Resmi</CardTitle>
+              <CardTitle className="text-base">Kanal Bantuan Pengembang</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-3">
-              {KANAL.map((k) => (
-                <div key={k.judul} className="flex items-start gap-3 rounded-md border p-3">
-                  <k.icon className="mt-0.5 size-4 text-primary shrink-0" />
-                  <div>
-                    <p className="text-sm font-semibold">{k.judul}</p>
-                    <p className="text-xs text-muted-foreground">{k.detail}</p>
+              {/* Hotline Pengembang AppBenk */}
+              <div className="flex items-start gap-3 rounded-md border p-3 bg-muted/10">
+                <Phone className="mt-0.5 size-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <div className="space-y-1 flex-1">
+                  <p className="text-sm font-semibold text-foreground">Hotline Pengembang AppBenk</p>
+                  <p className="text-xs text-muted-foreground">
+                    +62 823-2552-6299 · Senin–Sabtu, 08.00–17.00 WIB
+                  </p>
+                  <a
+                    href="https://wa.me/6282325526299"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 hover:text-emerald-700 hover:underline dark:text-emerald-400 pt-0.5"
+                  >
+                    <MessageCircle className="size-3.5" />
+                    Chat WhatsApp Langsung (+62 823-2552-6299)
+                    <ExternalLink className="size-3" />
+                  </a>
+                </div>
+              </div>
+
+              {/* Tiket Kendala Sistem & Bug */}
+              <div className="flex items-start gap-3 rounded-md border p-3">
+                <MessageSquare className="mt-0.5 size-4 text-primary shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Tiket Kendala Sistem & Bug</p>
+                  <p className="text-xs text-muted-foreground">
+                    Sampaikan laporan teknis & bug sistem langsung ke Tim Pengembang Platform AppBenk
+                  </p>
+                </div>
+              </div>
+
+              {/* Dukungan Integrasi & Gateway */}
+              <div className="flex items-start gap-3 rounded-md border p-3">
+                <Code2 className="mt-0.5 size-4 text-primary shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Dukungan Integrasi & Gateway</p>
+                  <p className="text-xs text-muted-foreground">
+                    Bantuan integrasi QRIS Midtrans, WhatsApp Bot, & printer thermal
+                  </p>
+                </div>
+              </div>
+
+              {/* Akun Sosial Media Resmi */}
+              <div className="flex items-start gap-3 rounded-md border p-3 bg-muted/10">
+                <Share2 className="mt-0.5 size-4 text-purple-600 dark:text-purple-400 shrink-0" />
+                <div className="space-y-1.5 flex-1">
+                  <p className="text-sm font-semibold text-foreground">Akun Sosial Media Resmi</p>
+                  <p className="text-xs text-muted-foreground">
+                    Ikuti rilis update, panduan operasional, & berita terbaru AppBenk:
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    <a
+                      href="https://instagram.com/group_pertamagpt"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-md border border-pink-200 bg-pink-50 px-2.5 py-1 text-xs font-medium text-pink-700 hover:bg-pink-100 transition-colors dark:border-pink-900/60 dark:bg-pink-950/40 dark:text-pink-300"
+                    >
+                      <Instagram className="size-3.5 text-pink-600" />
+                      @group_pertamagpt
+                      <ExternalLink className="size-2.5 opacity-70" />
+                    </a>
+                    <a
+                      href="https://www.tiktok.com/@Group_perTama.GPT"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-800 hover:bg-slate-200 transition-colors dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+                    >
+                      <TikTokIcon className="size-3.5 text-black dark:text-white" />
+                      @Group_perTama.GPT
+                      <ExternalLink className="size-2.5 opacity-70" />
+                    </a>
                   </div>
                 </div>
-              ))}
+              </div>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Kirim Tiket Bantuan</CardTitle>
+              <CardTitle className="text-base">Kirim Tiket ke Pengembang</CardTitle>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleKirimPesan} className="space-y-4">
                 <div className="space-y-1.5">
-                  <Label>Subjek</Label>
+                  <Label>Subjek Kendala</Label>
                   <Input
                     value={form.subjek}
                     maxLength={100}
                     onChange={(e) => setForm({ ...form, subjek: e.target.value })}
-                    placeholder="Contoh: Kendala pembayaran QRIS / bug peta"
+                    placeholder="Contoh: Bug sinkronisasi stok / error integrasi QRIS"
                   />
                   {err.subjek && <p className="text-xs text-destructive">{err.subjek}</p>}
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label>Kategori Masalah</Label>
+                  <Label>Tipe Kendala</Label>
                   <Select
                     value={form.kategori}
                     onValueChange={(v) => setForm({ ...form, kategori: v })}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Pilih kategori kendala" />
+                      <SelectValue placeholder="Pilih tipe kendala sistem" />
                     </SelectTrigger>
                     <SelectContent>
-                      {KATEGORI_PILIHAN.map((k) => (
+                      {kategoriList.map((k) => (
                         <SelectItem key={k} value={k}>
                           {k}
                         </SelectItem>
@@ -272,7 +441,7 @@ export function CustomerServicePage() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label>Pesan / Detail Masalah</Label>
+                  <Label>Deskripsi / Detail Kendala</Label>
                   <Textarea
                     rows={4}
                     maxLength={1000}
@@ -284,7 +453,8 @@ export function CustomerServicePage() {
                 </div>
 
                 <Button type="submit" disabled={submitting} className="w-full gap-2">
-                  <Send className="size-4" /> {submitting ? "Mengirim ke CS..." : "Kirim Pesan"}
+                  <Send className="size-4" />{" "}
+                  {submitting ? "Mengirim ke Tim Pengembang..." : "Kirim ke Tim Pengembang"}
                 </Button>
               </form>
             </CardContent>
@@ -325,22 +495,48 @@ export function CustomerServicePage() {
                         </span>
                         <p className="text-sm font-semibold line-clamp-1">{t.subjek}</p>
                       </div>
-                      <Badge variant="outline" className={`text-[10px] ${badgeInfo.class}`}>
-                        {badgeInfo.label}
-                      </Badge>
+                      <div className="flex items-center gap-1.5">
+                        <Badge
+                          variant="outline"
+                          className={`text-[9px] px-1.5 py-0 font-medium ${
+                            t.user_role === "admin_bengkel" || t.user_role === "admin"
+                              ? "border-purple-300/80 bg-purple-100/70 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300"
+                              : t.user_role === "owner"
+                                ? "border-amber-300/80 bg-amber-100/70 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300"
+                                : "border-blue-300/80 bg-blue-100/70 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300"
+                          }`}
+                        >
+                          {t.user_role === "admin_bengkel" || t.user_role === "admin"
+                            ? "Admin Bengkel"
+                            : t.user_role === "owner"
+                              ? "Owner Bengkel"
+                              : "Pelanggan"}
+                        </Badge>
+                        <Badge variant="outline" className={`text-[10px] ${badgeInfo.class}`}>
+                          {badgeInfo.label}
+                        </Badge>
+                      </div>
                     </div>
 
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>{t.kategori}</span>
-                      <span>
-                        {t.created_at
-                          ? new Date(t.created_at).toLocaleDateString("id-ID", {
-                              day: "numeric",
-                              month: "short",
-                              year: "numeric",
-                            })
-                          : "-"}
-                      </span>
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span className="font-medium text-foreground/80">{t.kategori}</span>
+                      <div className="flex items-center gap-2">
+                        {getTicketBengkel(t) && (
+                          <span className="flex items-center gap-1 font-medium text-foreground/80">
+                            <Building2 className="size-3 text-primary" /> {getTicketBengkel(t)}
+                          </span>
+                        )}
+                        <span>•</span>
+                        <span>
+                          {t.created_at
+                            ? new Date(t.created_at).toLocaleDateString("id-ID", {
+                                day: "numeric",
+                                month: "short",
+                                year: "numeric",
+                              })
+                            : "-"}
+                        </span>
+                      </div>
                     </div>
 
                     <p className="text-xs text-foreground/80 line-clamp-2 bg-muted/20 p-2 rounded">
@@ -385,16 +581,37 @@ export function CustomerServicePage() {
                   </Badge>
                 </div>
                 <h3 className="font-semibold text-sm mt-2 text-foreground">{selectedTicket.subjek}</h3>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Dikirim pada{" "}
-                  {new Date(selectedTicket.created_at).toLocaleDateString("id-ID", {
-                    day: "numeric",
-                    month: "long",
-                    year: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </p>
+                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 mt-1 text-[11px] text-muted-foreground">
+                  <span>
+                    Pelapor: <strong className="text-foreground">{selectedTicket.user_name}</strong>
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className={`text-[9px] px-1.5 py-0 font-medium ${
+                      selectedTicket.user_role === "admin_bengkel" || selectedTicket.user_role === "admin"
+                        ? "border-purple-300/80 bg-purple-100/70 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300"
+                        : selectedTicket.user_role === "owner"
+                          ? "border-amber-300/80 bg-amber-100/70 text-amber-700 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                          : "border-blue-300/80 bg-blue-100/70 text-blue-700 dark:border-blue-800 dark:bg-blue-950/60 dark:text-blue-300"
+                    }`}
+                  >
+                    {selectedTicket.user_role === "admin_bengkel" || selectedTicket.user_role === "admin"
+                      ? "Admin Bengkel"
+                      : selectedTicket.user_role === "owner"
+                        ? "Owner Bengkel"
+                        : "Pelanggan"}
+                  </Badge>
+                  <span>•</span>
+                  <span>Bengkel: <strong className="text-foreground">{getTicketBengkel(selectedTicket)}</strong></span>
+                  <span>•</span>
+                  <span>
+                    {new Date(selectedTicket.created_at).toLocaleDateString("id-ID", {
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                    })}
+                  </span>
+                </div>
               </div>
 
               {/* Chat Thread */}

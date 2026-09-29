@@ -3,15 +3,17 @@
  *
  * Menampilkan lokasi bengkel di peta interaktif menggunakan OpenStreetMap
  * (gratis, tanpa API key). Dilengkapi fitur:
- * - Marker posisi bengkel dengan popup info
+ * - Marker posisi bengkel dengan popup info interaktif
+ * - Mode Edit: Drag pin & klik peta untuk menentukan lokasi bengkel secara langsung
  * - Tombol petunjuk arah (Google Maps / Waze)
  * - Deteksi lokasi pengguna (Geolocation API)
  * - Estimasi jarak ke bengkel
+ * - Tombol pusatkan ke titik bengkel
  */
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Navigation, MapPin, ExternalLink, Locate, Phone, Clock, Loader2 } from "lucide-react";
+import { Navigation, MapPin, ExternalLink, Locate, Phone, Clock, Loader2, Crosshair } from "lucide-react";
 import { toast } from "sonner";
 
 export type BengkelLocation = {
@@ -32,6 +34,10 @@ type Props = {
   className?: string;
   /** Opsional: Google Maps API Key */
   apiKey?: string;
+  /** Aktifkan mode edit interaktif (draggable pin & map click) */
+  editable?: boolean;
+  /** Callback saat posisi marker digeser atau peta diklik dalam mode edit */
+  onLocationChange?: (lat: number, lng: number) => void;
 };
 
 /** Hitung jarak antara 2 koordinat (Haversine formula) dalam km */
@@ -47,26 +53,54 @@ function hitungJarak(lat1: number, lng1: number, lat2: number, lng2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+/** Parse string atau number koordinat dengan dukungan tanda koma lokal Indonesia */
+export function parseCoordinate(val: string | number | null | undefined): number {
+  if (typeof val === "number") return isNaN(val) ? 0 : val;
+  if (!val) return 0;
+  const clean = String(val).trim().replace(/,/g, ".");
+  const num = parseFloat(clean);
+  return isNaN(num) ? 0 : num;
+}
+
 export function BengkelMap({
   bengkel,
   height = 300,
   showInfo = true,
   className = "",
   apiKey,
+  editable = false,
+  onLocationChange,
 }: Props) {
   const mapRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<any>(null);
+  const mapInstanceRef = useRef<{
+    map: any;
+    marker: any;
+    L: any;
+    renderPopup: (loc: BengkelLocation) => string;
+  } | null>(null);
+
+  const onLocationChangeRef = useRef(onLocationChange);
+  onLocationChangeRef.current = onLocationChange;
+
+  const editableRef = useRef(editable);
+  editableRef.current = editable;
+
+  const bengkelRef = useRef(bengkel);
+  bengkelRef.current = bengkel;
+
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [jarak, setJarak] = useState<number | null>(null);
   const [locating, setLocating] = useState(false);
   const [mapReady, setMapReady] = useState(false);
 
-  // Inisialisasi peta Leaflet
+  // Inisialisasi peta Leaflet sekali saat komponen di-mount
   useEffect(() => {
-    let map: any = null;
+    let isMounted = true;
+    let mapObj: any = null;
 
     const initMap = async () => {
-      if (!mapRef.current || mapInstanceRef.current) return;
+      if (!mapRef.current) return;
+      if (mapInstanceRef.current) return;
 
       try {
         // Inject Leaflet CSS jika belum ada
@@ -80,8 +114,14 @@ export function BengkelMap({
 
         // Import Leaflet
         const L = await import("leaflet");
+        if (!isMounted || !mapRef.current) return;
 
-        // Fix default marker icon
+        // Cegah double initialization jika container sudah diinisialisasi
+        if ((mapRef.current as any)._leaflet_id) {
+          return;
+        }
+
+        // Fix default marker icon Leaflet
         delete (L.Icon.Default.prototype as any)._getIconUrl;
         L.Icon.Default.mergeOptions({
           iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
@@ -89,13 +129,17 @@ export function BengkelMap({
           shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
         });
 
+        const initialLat = bengkelRef.current.lat || DEMO_BENGKEL_LOCATION.lat;
+        const initialLng = bengkelRef.current.lng || DEMO_BENGKEL_LOCATION.lng;
+
         // Inisialisasi map
-        map = L.map(mapRef.current, {
-          center: [bengkel.lat, bengkel.lng],
+        const map = L.map(mapRef.current, {
+          center: [initialLat, initialLng],
           zoom: 16,
           zoomControl: true,
           scrollWheelZoom: true,
         });
+        mapObj = map;
 
         // Tile layer: Google Maps jika API Key tersedia, fallback ke OpenStreetMap
         const gMapsKey = apiKey || ((import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY as string) || "";
@@ -113,49 +157,75 @@ export function BengkelMap({
 
         // Custom marker icon untuk bengkel
         const bengkelIcon = L.divIcon({
-          className: "",
+          className: "bengkel-marker-pin",
           html: `
             <div style="
-              width: 40px; height: 40px;
+              width: 42px; height: 42px;
               background: linear-gradient(135deg, #2563eb, #7c3aed);
               border-radius: 50% 50% 50% 0;
               transform: rotate(-45deg);
               border: 3px solid white;
-              box-shadow: 0 4px 12px rgba(37,99,235,0.4);
+              box-shadow: 0 4px 14px rgba(37,99,235,0.45);
               display: flex; align-items: center; justify-content: center;
+              cursor: pointer;
             ">
               <span style="
                 transform: rotate(45deg);
-                font-size: 18px;
+                font-size: 19px;
                 display: block;
                 margin-top: 2px;
               ">🔧</span>
             </div>
           `,
-          iconSize: [40, 40],
-          iconAnchor: [20, 40],
+          iconSize: [42, 42],
+          iconAnchor: [21, 42],
           popupAnchor: [0, -45],
         });
 
-        // Marker bengkel
-        const marker = L.marker([bengkel.lat, bengkel.lng], { icon: bengkelIcon }).addTo(map);
+        // Marker bengkel (draggable jika dalam mode editable)
+        const marker = L.marker([initialLat, initialLng], {
+          icon: bengkelIcon,
+          draggable: !!editableRef.current,
+        }).addTo(map);
 
-        // Popup info bengkel
-        const popupContent = `
-          <div style="min-width: 200px; font-family: system-ui, sans-serif;">
+        const renderPopup = (loc: BengkelLocation) => `
+          <div style="min-width: 210px; font-family: system-ui, sans-serif;">
             <div style="font-weight: 700; font-size: 14px; color: #1e293b; margin-bottom: 4px;">
-              🏪 ${bengkel.nama}
+              🏪 ${loc.nama || "Bengkel"}
             </div>
-            <div style="font-size: 12px; color: #64748b; margin-bottom: 6px;">
-              📍 ${bengkel.alamat}
+            <div style="font-size: 12px; color: #64748b; margin-bottom: 6px; line-height: 1.4;">
+              📍 ${loc.alamat || "Alamat bengkel"}
             </div>
-            ${bengkel.telepon ? `<div style="font-size: 12px; color: #64748b;">📞 ${bengkel.telepon}</div>` : ""}
-            ${bengkel.jamOperasional ? `<div style="font-size: 12px; color: #64748b; margin-top: 2px;">🕐 ${bengkel.jamOperasional}</div>` : ""}
+            ${loc.telepon ? `<div style="font-size: 12px; color: #64748b;">📞 ${loc.telepon}</div>` : ""}
+            ${loc.jamOperasional ? `<div style="font-size: 12px; color: #64748b; margin-top: 2px;">🕐 ${loc.jamOperasional}</div>` : ""}
+            ${
+              editableRef.current
+                ? `<div style="margin-top: 8px; padding: 4px 8px; background: #eff6ff; border-radius: 6px; font-size: 11px; color: #1d4ed8; font-weight: 600;">
+                    💡 Geser pin ini atau klik peta untuk memindahkan titik bengkel.
+                  </div>`
+                : ""
+            }
           </div>
         `;
-        marker.bindPopup(popupContent, { maxWidth: 250 }).openPopup();
 
-        mapInstanceRef.current = { map, L };
+        marker.bindPopup(renderPopup(bengkelRef.current), { maxWidth: 260 }).openPopup();
+
+        // Event listener marker drag
+        marker.on("dragend", () => {
+          const pos = marker.getLatLng();
+          onLocationChangeRef.current?.(pos.lat, pos.lng);
+        });
+
+        // Event listener klik peta (mode edit)
+        map.on("click", (e: any) => {
+          if (!editableRef.current) return;
+          const { lat, lng } = e.latlng;
+          marker.setLatLng([lat, lng]);
+          map.panTo([lat, lng]);
+          onLocationChangeRef.current?.(lat, lng);
+        });
+
+        mapInstanceRef.current = { map, marker, L, renderPopup };
         setMapReady(true);
       } catch (err) {
         console.error("Failed to init map:", err);
@@ -165,12 +235,60 @@ export function BengkelMap({
     initMap();
 
     return () => {
+      isMounted = false;
       if (mapInstanceRef.current?.map) {
-        mapInstanceRef.current.map.remove();
+        try {
+          mapInstanceRef.current.map.remove();
+        } catch {}
         mapInstanceRef.current = null;
+      } else if (mapObj) {
+        try {
+          mapObj.remove();
+        } catch {}
       }
     };
-  }, [bengkel.lat, bengkel.lng]);
+  }, []);
+
+  // Update posisi marker, popup, dan mode dragging tanpa destroy map
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+    const { map, marker, renderPopup } = mapInstanceRef.current;
+
+    const currentPos = marker.getLatLng();
+    const latDiff = Math.abs(currentPos.lat - bengkel.lat);
+    const lngDiff = Math.abs(currentPos.lng - bengkel.lng);
+
+    if (latDiff > 0.000001 || lngDiff > 0.000001) {
+      marker.setLatLng([bengkel.lat, bengkel.lng]);
+      map.panTo([bengkel.lat, bengkel.lng]);
+    }
+
+    if (renderPopup) {
+      marker.setPopupContent(renderPopup(bengkel));
+    }
+
+    if (editable) {
+      marker.dragging?.enable();
+    } else {
+      marker.dragging?.disable();
+    }
+  }, [
+    bengkel.lat,
+    bengkel.lng,
+    bengkel.nama,
+    bengkel.alamat,
+    bengkel.telepon,
+    bengkel.jamOperasional,
+    editable,
+  ]);
+
+  // Pusatkan peta ke lokasi bengkel saat ini
+  const pusatkanKeBengkel = () => {
+    if (!mapInstanceRef.current) return;
+    const { map, marker } = mapInstanceRef.current;
+    map.setView([bengkel.lat, bengkel.lng], 16);
+    marker.openPopup();
+  };
 
   // Tampilkan lokasi user di peta
   const deteksiLokasi = () => {
@@ -270,6 +388,16 @@ export function BengkelMap({
           </div>
         )}
 
+        {/* Floating edit mode banner */}
+        {editable && mapReady && (
+          <div className="absolute top-3 left-3 z-[1000] pointer-events-none">
+            <Badge className="bg-blue-600/95 text-white border-0 shadow-md backdrop-blur px-2.5 py-1 text-xs flex items-center gap-1.5 font-medium">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              Mode Ubah Posisi: Geser pin atau klik di peta
+            </Badge>
+          </div>
+        )}
+
         {/* Floating controls */}
         {mapReady && (
           <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
@@ -277,8 +405,19 @@ export function BengkelMap({
               size="sm"
               variant="secondary"
               className="shadow-lg gap-1.5 bg-white/95 hover:bg-white text-foreground"
+              onClick={pusatkanKeBengkel}
+              title="Pusatkan ke titik bengkel"
+            >
+              <Crosshair className="h-3.5 w-3.5 text-red-600" />
+              <span className="text-xs">Titik Bengkel</span>
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="shadow-lg gap-1.5 bg-white/95 hover:bg-white text-foreground"
               onClick={deteksiLokasi}
               disabled={locating}
+              title="Deteksi lokasi Anda saat ini"
             >
               {locating ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -349,14 +488,13 @@ export function BengkelMap({
 }
 
 /**
- * Default koordinat bengkel demo (Yogyakarta)
- * Ganti dengan koordinat bengkel yang sebenarnya
+ * Default koordinat bengkel (Bengkel Fandi Motor, Purbalingga)
  */
 export const DEMO_BENGKEL_LOCATION: BengkelLocation = {
-  nama: "AppBenk — Demo Bengkel",
-  alamat: "Jl. Magelang No. 123, Sinduadi, Mlati, Sleman, Yogyakarta 55284",
-  telepon: "0274-123456",
+  nama: "Bengkel Fandi Motor",
+  alamat: "Jl. Merdeka No. 12, Purbalingga, Jawa Tengah",
+  telepon: "081234567890",
   jamOperasional: "Senin–Sabtu: 08.00–17.00 WIB",
-  lat: -7.7516,
-  lng: 110.3761,
+  lat: -7.3245975,
+  lng: 109.352647,
 };

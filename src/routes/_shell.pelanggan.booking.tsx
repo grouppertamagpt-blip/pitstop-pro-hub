@@ -59,19 +59,23 @@ function BookingPelanggan() {
     pelanggan,
     kendaraan,
     bengkel,
+    activeBengkelId,
+    activeBengkel,
     mekanik,
     buatBooking,
     simpanPelanggan,
+    refreshBengkel,
     refreshMekanik,
     refreshBooking,
     refreshKendaraan,
   } = useStore();
 
   useEffect(() => {
+    refreshBengkel?.();
     refreshMekanik?.();
     refreshBooking?.();
     refreshKendaraan?.();
-  }, [refreshMekanik, refreshBooking, refreshKendaraan]);
+  }, [refreshBengkel, refreshMekanik, refreshBooking, refreshKendaraan]);
 
   const profil = useMemo(() => {
     if (!user) return undefined;
@@ -97,8 +101,18 @@ function BookingPelanggan() {
 
   const utama = kendaraanSaya[0];
 
+  const preferredBengkelId = useMemo(() => {
+    return (
+      activeBengkelId ||
+      activeBengkel?.id ||
+      bengkel.find((b) => b.id === "bengkel-2307")?.id ||
+      bengkel[0]?.id ||
+      "bengkel-2307"
+    );
+  }, [activeBengkelId, activeBengkel, bengkel]);
+
   const kosong = {
-    bengkelId: bengkel[0]?.id || "bengkel-001",
+    bengkelId: preferredBengkelId,
     vehicleId: utama?.id ?? "",
     kendaraan: utama ? labelKendaraan(utama) : "",
     plat: utama?.plat ?? "",
@@ -215,17 +229,76 @@ function BookingPelanggan() {
     });
   }, [booking, user, profil]);
 
+  const [, setLocVersion] = useState(0);
+  useEffect(() => {
+    const handleLocUpdate = () => setLocVersion((v) => v + 1);
+    window.addEventListener("appbenk_bengkel_location_updated", handleLocUpdate);
+    return () => window.removeEventListener("appbenk_bengkel_location_updated", handleLocUpdate);
+  }, []);
+
+  // Sync default workshop to active workshop (Bengkel Fandi Motor)
+  useEffect(() => {
+    if (preferredBengkelId && (!form.bengkelId || form.bengkelId === "bengkel-001")) {
+      setForm((prev) => ({
+        ...prev,
+        bengkelId: preferredBengkelId,
+      }));
+    }
+  }, [preferredBengkelId]);
+
   const getBengkelLoc = (bId: string): BengkelLocation => {
+    const targetId = bId || preferredBengkelId;
+    const selectedBengkel =
+      bengkel.find((b) => b.id === targetId) ||
+      bengkel.find((b) => b.id === "bengkel-2307") ||
+      activeBengkel;
+
+    const cleanBengkelAlamat = (selectedBengkel?.alamat || "").replace(/\[geo:[^\]]+\]/gi, "").trim();
+
+    // 1. Prioritas Utama: Ambil langsung dari data store/database yang sedang aktif/dipilih
+    if (selectedBengkel && (selectedBengkel.lat || selectedBengkel.alamat)) {
+      return {
+        nama: selectedBengkel.nama || "Bengkel Fandi Motor",
+        alamat: cleanBengkelAlamat || "Jl. Selaganggang, Kecamatan mrebet Kabupaten purbalingga.",
+        telepon: selectedBengkel.telepon || "081234567890",
+        jamOperasional: selectedBengkel.jamOperasional || "Senin–Sabtu: 08.00–17.00 WIB",
+        lat: selectedBengkel.lat ?? -7.3245975,
+        lng: selectedBengkel.lng ?? 109.352647,
+      };
+    }
+
+    // 2. Fallback: localStorage
     try {
-      const saved = localStorage.getItem("appbenk_bengkel_location");
-      if (saved) return JSON.parse(saved);
+      const savedWs = localStorage.getItem(`appbenk_bengkel_location_${targetId}`);
+      if (savedWs) {
+        const parsed = JSON.parse(savedWs);
+        if (parsed.lat && parsed.lng) {
+          return {
+            nama: parsed.nama || selectedBengkel?.nama || "Bengkel Fandi Motor",
+            alamat:
+              cleanBengkelAlamat ||
+              (parsed.alamat || "").replace(/\[geo:[^\]]+\]/gi, "").trim() ||
+              "Jl. Selaganggang, Kecamatan mrebet Kabupaten purbalingga.",
+            telepon: parsed.telepon || selectedBengkel?.telepon || "081234567890",
+            jamOperasional:
+              parsed.jamOperasional ||
+              selectedBengkel?.jamOperasional ||
+              "Senin–Sabtu: 08.00–17.00 WIB",
+            lat: parsed.lat,
+            lng: parsed.lng,
+          };
+        }
+      }
     } catch {}
-    const selectedBengkel = bengkel.find((b) => b.id === bId);
+
+    // 3. Default Bengkel Fandi Motor
     return {
-      ...DEMO_BENGKEL_LOCATION,
-      nama: selectedBengkel?.nama || DEMO_BENGKEL_LOCATION.nama,
-      alamat: selectedBengkel?.alamat || DEMO_BENGKEL_LOCATION.alamat,
-      telepon: selectedBengkel?.telepon || DEMO_BENGKEL_LOCATION.telepon,
+      nama: selectedBengkel?.nama || "Bengkel Fandi Motor",
+      alamat: cleanBengkelAlamat || "Jl. Selaganggang, Kecamatan mrebet Kabupaten purbalingga.",
+      telepon: selectedBengkel?.telepon || "081234567890",
+      jamOperasional: selectedBengkel?.jamOperasional || "Senin–Sabtu: 08.00–17.00 WIB",
+      lat: -7.3245975,
+      lng: 109.352647,
     };
   };
 

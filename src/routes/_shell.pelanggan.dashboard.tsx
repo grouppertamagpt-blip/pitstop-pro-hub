@@ -40,11 +40,29 @@ export const Route = createFileRoute("/_shell/pelanggan/dashboard")({
 
 function DashboardPelanggan() {
   const { user } = useAuth();
-  const { servis, booking, notifikasi, refreshBooking } = useStore();
+  const { servis, booking, notifikasi, refreshBooking, refreshServis } = useStore();
 
   useEffect(() => {
-    refreshBooking().catch(() => {});
-  }, [refreshBooking]);
+    refreshBooking?.().catch(() => {});
+    refreshServis?.().catch(() => {});
+
+    const handleSync = () => {
+      refreshBooking?.().catch(() => {});
+      refreshServis?.().catch(() => {});
+    };
+
+    window.addEventListener("appbenk_booking_updated", handleSync);
+    window.addEventListener("appbenk_servis_updated", handleSync);
+    window.addEventListener("appbenk_pembayaran_updated", handleSync);
+
+    const interval = setInterval(handleSync, 10000);
+    return () => {
+      window.removeEventListener("appbenk_booking_updated", handleSync);
+      window.removeEventListener("appbenk_servis_updated", handleSync);
+      window.removeEventListener("appbenk_pembayaran_updated", handleSync);
+      clearInterval(interval);
+    };
+  }, [refreshBooking, refreshServis]);
 
   const userNamaLower = (user?.nama || "").trim().toLowerCase();
   const userPelangganLower = (user?.pelanggan || "").trim().toLowerCase();

@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState, useEffect } from "react";
 import {
   ShoppingCart,
+  ClipboardList,
   ArrowDownUp,
   PackageCheck,
   RotateCcw,
@@ -17,6 +18,15 @@ import {
   FileText,
   Info,
   Check,
+  Search,
+  Calendar,
+  Filter,
+  RefreshCw,
+  Boxes,
+  TrendingDown,
+  TrendingUp,
+  UserCheck,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader, EmptyState } from "@/components/page-header";
@@ -68,13 +78,13 @@ import {
 export const Route = createFileRoute("/_shell/admin/stok")({
   head: () => ({
     meta: [
-      { title: "Pembelian & Riwayat Stok — AppBenk" },
+      { title: "Catatan Stok — AppBenk" },
       {
         name: "description",
         content:
           "Catat pembelian sparepart dari supplier, pantau riwayat pergerakan stok masuk/keluar, dan penggunaan sparepart per servis.",
       },
-      { property: "og:title", content: "Pembelian & Riwayat Stok — AppBenk" },
+      { property: "og:title", content: "Catatan Stok — AppBenk" },
       {
         property: "og:description",
         content: "Kelola pembelian supplier, riwayat stok, dan penggunaan sparepart bengkel.",
@@ -95,6 +105,7 @@ function StokAdmin() {
     penggunaan,
     returSparepart,
     supplier,
+    servis,
     catatPembelian,
     catatReturSparepart,
     ubahStatusRetur,
@@ -102,15 +113,32 @@ function StokAdmin() {
     hapusPembelian,
     refreshSupplier,
     refreshRetur,
+    refreshStok,
+    refreshPembelian,
+    refreshRiwayatStok,
+    refreshPenggunaan,
+    refreshSparepart,
   } = useStore();
 
   useEffect(() => {
     refreshSupplier().catch(() => {});
     refreshRetur().catch(() => {});
-    const interval = setInterval(() => {
+    refreshStok().catch(() => {});
+    refreshSparepart().catch(() => {});
+
+    const handleSync = () => {
       refreshRetur().catch(() => {});
-    }, 5000);
-    return () => clearInterval(interval);
+      refreshStok().catch(() => {});
+      refreshSparepart().catch(() => {});
+    };
+
+    window.addEventListener("appbenk_sparepart_updated", handleSync);
+
+    const interval = setInterval(handleSync, 10000);
+    return () => {
+      window.removeEventListener("appbenk_sparepart_updated", handleSync);
+      clearInterval(interval);
+    };
   }, []);
 
   const [editPembelian, setEditPembelian] = useState<PembelianSparepart | null>(null);
@@ -134,23 +162,37 @@ function StokAdmin() {
     });
   };
 
-  const handleSimpanEdit = (e: React.FormEvent) => {
+  const handleSimpanEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editPembelian) return;
     if (!formEdit.sparepartId.trim() || !formEdit.supplier.trim() || formEdit.jumlah <= 0 || formEdit.harga <= 0) {
       toast.error("Lengkapi sparepart, supplier, jumlah, dan harga beli.");
       return;
     }
-    ubahPembelian(editPembelian.id, formEdit);
-    toast.success("Pembelian berhasil diperbarui dan stok telah disesuaikan");
-    setEditPembelian(null);
+    try {
+      await ubahPembelian(editPembelian.id, formEdit);
+      await refreshPembelian().catch(() => {});
+      await refreshSparepart().catch(() => {});
+      await refreshRiwayatStok().catch(() => {});
+      toast.success("Pembelian berhasil diperbarui dan stok telah disesuaikan");
+      setEditPembelian(null);
+    } catch (err: any) {
+      toast.error(err?.message || "Gagal memperbarui data pembelian.");
+    }
   };
 
   const handleKonfirmasiHapus = async () => {
     if (!hapusId) return;
-    await hapusPembelian(hapusId);
-    toast.success("Data pembelian berhasil dihapus dan stok telah dikembalikan");
-    setHapusId(null);
+    try {
+      await hapusPembelian(hapusId);
+      await refreshPembelian().catch(() => {});
+      await refreshSparepart().catch(() => {});
+      await refreshRiwayatStok().catch(() => {});
+      toast.success("Data pembelian berhasil dihapus dan stok telah dikembalikan");
+      setHapusId(null);
+    } catch (err: any) {
+      toast.error(err?.message || "Gagal menghapus pembelian.");
+    }
   };
 
   const namaPart = useMemo(
@@ -174,14 +216,43 @@ function StokAdmin() {
     [sparepart],
   );
 
+  const supplierOptions = useMemo(
+    () =>
+      supplier.map((s) => ({
+        id: s.id,
+        value: s.nama,
+        label: s.nama,
+        sublabel: s.kontak ? `Kontak: ${s.kontak}` : undefined,
+      })),
+    [supplier],
+  );
+
+  const defaultPart = sparepart[0];
   const kosong = {
-    sparepartId: sparepart[0]?.id ?? "",
-    supplier: "",
+    sparepartId: defaultPart?.id ?? "",
+    supplier: supplier[0]?.nama ?? "",
     tanggal: new Date().toISOString().slice(0, 10),
     jumlah: 1,
-    harga: 0,
+    harga: defaultPart?.harga ?? 0,
   };
   const [form, setForm] = useState(kosong);
+
+  useEffect(() => {
+    if ((!form.sparepartId || form.harga === 0) && sparepart.length > 0) {
+      const sp = sparepart[0];
+      setForm((prev) => ({
+        ...prev,
+        sparepartId: prev.sparepartId || sp.id,
+        harga: prev.harga > 0 ? prev.harga : sp.harga,
+      }));
+    }
+    if (!form.supplier && supplier.length > 0) {
+      setForm((prev) => ({
+        ...prev,
+        supplier: prev.supplier || supplier[0].nama,
+      }));
+    }
+  }, [sparepart, supplier]);
 
   // ==========================================================================
   // RETUR PEMBELIAN (RELASIONAL SUPPLIER -> PEMBELIAN -> BARANG -> RETUR)
@@ -310,15 +381,44 @@ function StokAdmin() {
     }
   };
 
-  const simpan = (e: React.FormEvent) => {
+  const simpan = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.sparepartId.trim() || !form.supplier.trim() || form.jumlah <= 0 || form.harga <= 0) {
-      toast.error("Lengkapi sparepart, supplier, jumlah, dan harga beli.");
+    if (!form.sparepartId.trim()) {
+      toast.error("Pilih atau masukkan sparepart yang dibeli.");
       return;
     }
-    catatPembelian(form);
-    toast.success("Pembelian dicatat, stok bertambah");
-    setForm({ ...kosong, tanggal: form.tanggal });
+    if (!form.supplier.trim()) {
+      toast.error("Pilih atau masukkan nama supplier.");
+      return;
+    }
+    if (form.jumlah <= 0) {
+      toast.error("Jumlah pembelian minimal 1 unit.");
+      return;
+    }
+    if (form.harga <= 0) {
+      toast.error("Harga beli satuan harus lebih dari Rp 0.");
+      return;
+    }
+    try {
+      await catatPembelian({
+        ...form,
+        bengkelId: user?.bengkelId || "bengkel-001",
+      });
+      await refreshPembelian().catch(() => {});
+      await refreshSparepart().catch(() => {});
+      await refreshRiwayatStok().catch(() => {});
+      toast.success("Catatan pembelian berhasil disimpan");
+      const currentPart = sparepart.find((s) => s.id === form.sparepartId) || sparepart[0];
+      setForm({
+        sparepartId: currentPart?.id ?? "",
+        supplier: form.supplier,
+        tanggal: form.tanggal,
+        jumlah: 1,
+        harga: currentPart?.harga ?? 0,
+      });
+    } catch (err: any) {
+      toast.error(err?.message || "Gagal mencatat pembelian.");
+    }
   };
 
   const simpanRetur = async (e: React.FormEvent) => {
@@ -390,6 +490,8 @@ function StokAdmin() {
     try {
       await ubahStatusRetur(returId, statusBaru, alasanTolak);
       await refreshRetur().catch(() => {});
+      await refreshSparepart().catch(() => {});
+      await refreshRiwayatStok().catch(() => {});
       toast.success(`Status retur berhasil diubah ke "${statusBaru}"`);
       if (detailRetur?.id === returId) {
         setDetailRetur((prev) =>
@@ -473,19 +575,385 @@ function StokAdmin() {
     }
   };
 
+  // ==========================================================================
+  // TAB PENGGUNAAN SPAREPART (DARI MODUL OPERASIONAL SERVIS)
+  // ==========================================================================
+  const [searchPenggunaan, setSearchPenggunaan] = useState<string>("");
+  const [filterPenggunaanStatus, setFilterPenggunaanStatus] = useState<string>("semua");
+
+  // Data penggunaan terpadu: dari store penggunaan dan servis items
+  const unifiedPenggunaan = useMemo(() => {
+    const list: Array<{
+      id: string;
+      tanggal: string;
+      servisId: string;
+      servisNomor: string;
+      sparepartId: string;
+      jumlah: number;
+      mekanik: string;
+      pelanggan: string;
+      statusServis: string;
+      keterangan: string;
+    }> = [];
+
+    const seenKey = new Set<string>();
+
+    for (const p of penggunaan) {
+      const srv = servis.find((s) => s.nomor === p.servisNomor || s.id === p.servisId);
+      const key = `${p.servisNomor || p.servisId}-${p.sparepartId}-${p.jumlah}`;
+      if (!seenKey.has(key)) {
+        seenKey.add(key);
+        list.push({
+          id: p.id,
+          tanggal: p.tanggal,
+          servisId: p.servisId,
+          servisNomor: p.servisNomor || srv?.nomor || p.servisId,
+          sparepartId: p.sparepartId,
+          jumlah: p.jumlah,
+          mekanik: p.mekanik || srv?.mekanik || "—",
+          pelanggan: p.pelanggan || srv?.pelanggan || "Pelanggan",
+          statusServis: p.statusServis || srv?.status || "Diproses",
+          keterangan: p.keterangan || srv?.pekerjaan || "Penggunaan operasional servis",
+        });
+      }
+    }
+
+    for (const s of servis) {
+      if (s.items && s.items.length > 0) {
+        for (const it of s.items) {
+          const key = `${s.nomor}-${it.sparepartId}-${it.jumlah}`;
+          if (!seenKey.has(key)) {
+            seenKey.add(key);
+            list.push({
+              id: `srv-${s.id}-${it.sparepartId}`,
+              tanggal: s.tanggal,
+              servisId: s.id,
+              servisNomor: s.nomor,
+              sparepartId: it.sparepartId,
+              jumlah: it.jumlah,
+              mekanik: s.mekanik || "—",
+              pelanggan: s.pelanggan || "Pelanggan",
+              statusServis: s.status || "Diproses",
+              keterangan: s.pekerjaan || s.catatan || `Servis ${s.nomor}`,
+            });
+          }
+        }
+      }
+    }
+
+    list.sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+    return list;
+  }, [penggunaan, servis]);
+
+  const filteredPenggunaan = useMemo(() => {
+    return unifiedPenggunaan.filter((p) => {
+      if (filterPenggunaanStatus !== "semua" && p.statusServis !== filterPenggunaanStatus) return false;
+      if (searchPenggunaan.trim()) {
+        const q = searchPenggunaan.toLowerCase();
+        const noSrv = p.servisNomor.toLowerCase();
+        const part = (namaPart.get(p.sparepartId) || p.sparepartId).toLowerCase();
+        const mek = p.mekanik.toLowerCase();
+        const pel = p.pelanggan.toLowerCase();
+        if (!noSrv.includes(q) && !part.includes(q) && !mek.includes(q) && !pel.includes(q)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [unifiedPenggunaan, filterPenggunaanStatus, searchPenggunaan, namaPart]);
+
+  const renderStatusServisBadge = (status: string) => {
+    const s = (status || "").toLowerCase();
+    if (s.includes("selesai dibayar") || s.includes("lunas")) {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400 ring-1 ring-emerald-500/20">
+          <CheckCircle2 className="size-3" /> Lunas
+        </span>
+      );
+    }
+    if (s.includes("selesai")) {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-green-600/10 px-2.5 py-0.5 text-xs font-semibold text-green-700 dark:text-green-400 ring-1 ring-green-600/20">
+          <PackageCheck className="size-3" /> Selesai
+        </span>
+      );
+    }
+    if (s.includes("pembayaran")) {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400 ring-1 ring-amber-500/20">
+          <Clock className="size-3" /> Menunggu Pembayaran
+        </span>
+      );
+    }
+    if (s.includes("proses") || s.includes("kerja")) {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-2.5 py-0.5 text-xs font-semibold text-blue-600 dark:text-blue-400 ring-1 ring-blue-500/20">
+          <ArrowDownUp className="size-3" /> Diproses
+        </span>
+      );
+    }
+    return <Badge variant="outline">{status}</Badge>;
+  };
+
+  // ==========================================================================
+  // TAB RIWAYAT STOK (KARTU MUTASI STOK TERPADU KRONOLOGIS)
+  // ==========================================================================
+  const [filterRiwayatPartId, setFilterRiwayatPartId] = useState<string>("semua");
+  const [filterRiwayatTanggalMulai, setFilterRiwayatTanggalMulai] = useState<string>("");
+  const [filterRiwayatTanggalAkhir, setFilterRiwayatTanggalAkhir] = useState<string>("");
+  const [filterRiwayatJenis, setFilterRiwayatJenis] = useState<string>("semua");
+  const [searchRiwayat, setSearchRiwayat] = useState<string>("");
+
+  const currentStockMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const sp of sparepart) {
+      map.set(sp.id, sp.stok);
+    }
+    return map;
+  }, [sparepart]);
+
+  const unifiedMovements = useMemo(() => {
+    type MovementItem = {
+      id: string;
+      tanggal: string;
+      sparepartId: string;
+      jenis: "Masuk" | "Keluar";
+      referensi: string;
+      jumlah: number;
+      keterangan: string;
+    };
+
+    const list: MovementItem[] = [];
+    const seenRefs = new Set<string>();
+
+    for (const r of riwayatStok) {
+      let ref = r.referensi || "";
+      if (!ref) {
+        const m = r.keterangan?.match(
+          /\b(BL-\d{4}-\d+|PB-\d{4}-\d+|SRV-\d{4}-\d+|RET-\d{4}-\d+|TRX-\d{4}-\d+|[A-Z]{2,4}-\d+)\b/i,
+        );
+        if (m) ref = m[1].toUpperCase();
+      }
+      const uniqueKey = `${r.sparepartId}-${ref}-${r.jenis}-${r.jumlah}-${r.tanggal}`;
+      seenRefs.add(uniqueKey);
+
+      list.push({
+        id: r.id,
+        tanggal: r.tanggal,
+        sparepartId: r.sparepartId,
+        jenis: r.jenis,
+        referensi: ref || "—",
+        jumlah: r.jumlah,
+        keterangan: r.keterangan,
+      });
+    }
+
+    for (const p of pembelian) {
+      const uniqueKey = `${p.sparepartId}-${p.nomor}-Masuk-${p.jumlah}-${p.tanggal}`;
+      if (!seenRefs.has(uniqueKey)) {
+        seenRefs.add(uniqueKey);
+        list.push({
+          id: `pb-${p.id}`,
+          tanggal: p.tanggal,
+          sparepartId: p.sparepartId,
+          jenis: "Masuk",
+          referensi: p.nomor,
+          jumlah: p.jumlah,
+          keterangan: `Pembelian dari ${p.supplier}`,
+        });
+      }
+    }
+
+    for (const u of penggunaan) {
+      const ref = u.servisNomor || u.servisId;
+      const uniqueKey = `${u.sparepartId}-${ref}-Keluar-${u.jumlah}-${u.tanggal}`;
+      if (!seenRefs.has(uniqueKey)) {
+        seenRefs.add(uniqueKey);
+        list.push({
+          id: `pg-${u.id}`,
+          tanggal: u.tanggal,
+          sparepartId: u.sparepartId,
+          jenis: "Keluar",
+          referensi: ref,
+          jumlah: u.jumlah,
+          keterangan: `Dipakai servis ${ref} (${u.pelanggan || "Pelanggan"})`,
+        });
+      }
+    }
+
+    for (const r of returSparepart) {
+      if (
+        r.stokDikurangi ||
+        r.status === "Disetujui" ||
+        r.status === "Selesai" ||
+        r.status === "Barang Dikirim"
+      ) {
+        const uniqueKey = `${r.sparepartId}-${r.nomorRetur}-Keluar-${r.jumlah}-${r.tanggal}`;
+        if (!seenRefs.has(uniqueKey)) {
+          seenRefs.add(uniqueKey);
+          list.push({
+            id: `ret-${r.id}`,
+            tanggal: r.tanggal,
+            sparepartId: r.sparepartId,
+            jenis: "Keluar",
+            referensi: r.nomorRetur,
+            jumlah: r.jumlah,
+            keterangan: `Retur ke ${r.supplier} (${r.alasan})`,
+          });
+        }
+      }
+    }
+
+    list.sort((a, b) => b.tanggal.localeCompare(a.tanggal));
+    return list;
+  }, [riwayatStok, pembelian, penggunaan, returSparepart]);
+
+  const sisaStokMap = useMemo(() => {
+    const sisaMap = new Map<string, number>();
+    const runningStock = new Map<string, number>();
+
+    for (const [partId, stok] of currentStockMap.entries()) {
+      runningStock.set(partId, stok);
+    }
+
+    for (const m of unifiedMovements) {
+      const cur = runningStock.get(m.sparepartId) ?? 0;
+      sisaMap.set(m.id, cur);
+
+      if (m.jenis === "Masuk") {
+        runningStock.set(m.sparepartId, Math.max(0, cur - m.jumlah));
+      } else {
+        runningStock.set(m.sparepartId, cur + m.jumlah);
+      }
+    }
+
+    return sisaMap;
+  }, [unifiedMovements, currentStockMap]);
+
+  const filteredRiwayatStok = useMemo(() => {
+    return unifiedMovements.filter((m) => {
+      if (filterRiwayatPartId && filterRiwayatPartId !== "semua" && m.sparepartId !== filterRiwayatPartId) return false;
+      const isRetur = m.referensi?.toUpperCase().startsWith("RET") || m.keterangan?.toLowerCase().includes("retur");
+      if (filterRiwayatJenis === "Masuk" && m.jenis !== "Masuk") return false;
+      if (filterRiwayatJenis === "Keluar" && (m.jenis !== "Keluar" || isRetur)) return false;
+      if (filterRiwayatJenis === "Retur" && !isRetur) return false;
+      if (filterRiwayatTanggalMulai && m.tanggal < filterRiwayatTanggalMulai) return false;
+      if (filterRiwayatTanggalAkhir && m.tanggal > filterRiwayatTanggalAkhir) return false;
+      if (searchRiwayat.trim()) {
+        const query = searchRiwayat.toLowerCase();
+        const partName = (namaPart.get(m.sparepartId) || m.sparepartId).toLowerCase();
+        const ref = m.referensi.toLowerCase();
+        const ket = m.keterangan.toLowerCase();
+        if (!partName.includes(query) && !ref.includes(query) && !ket.includes(query)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [
+    unifiedMovements,
+    filterRiwayatPartId,
+    filterRiwayatJenis,
+    filterRiwayatTanggalMulai,
+    filterRiwayatTanggalAkhir,
+    searchRiwayat,
+    namaPart,
+  ]);
+
+  const statsRiwayat = useMemo(() => {
+    let masuk = 0;
+    let keluarServis = 0;
+    let keluarRetur = 0;
+    for (const m of unifiedMovements) {
+      const isRetur = m.referensi?.toUpperCase().startsWith("RET") || m.keterangan?.toLowerCase().includes("retur");
+      if (m.jenis === "Masuk") {
+        masuk += m.jumlah;
+      } else if (isRetur) {
+        keluarRetur += m.jumlah;
+      } else {
+        keluarServis += m.jumlah;
+      }
+    }
+    return {
+      totalMutasi: unifiedMovements.length,
+      stokMasuk: masuk,
+      stokKeluar: keluarServis + keluarRetur,
+      stokKeluarServis: keluarServis,
+      stokRetur: keluarRetur,
+      sparepartAktif: new Set(unifiedMovements.map((m) => m.sparepartId)).size,
+    };
+  }, [unifiedMovements]);
+
+  const statsPenggunaan = useMemo(() => {
+    let totalQty = 0;
+    const distinctServis = new Set<string>();
+    for (const p of unifiedPenggunaan) {
+      totalQty += p.jumlah;
+      if (p.servisNomor) distinctServis.add(p.servisNomor);
+    }
+    return {
+      totalPenggunaan: unifiedPenggunaan.length,
+      totalQty,
+      totalServis: distinctServis.size,
+    };
+  }, [unifiedPenggunaan]);
+
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const handleRefreshAll = async () => {
+    setIsRefreshing(true);
+    try {
+      await Promise.all([
+        refreshStok(),
+        refreshPembelian(),
+        refreshRiwayatStok(),
+        refreshPenggunaan(),
+        refreshSparepart(),
+      ]);
+      toast.success("Data inventaris & mutasi stok berhasil diperbarui");
+    } catch {
+      toast.error("Gagal memperbarui data inventaris");
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const formatTanggalWaktu = (tgl?: string, waktu?: string) => {
+    if (!tgl) return "—";
+    const dateFormatted = tanggalPanjang(tgl);
+    if (waktu) return `${dateFormatted} · ${waktu}`;
+    if (tgl.includes("T")) {
+      try {
+        const d = new Date(tgl);
+        if (!isNaN(d.getTime())) {
+          const timeStr = d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+          return `${dateFormatted} · ${timeStr}`;
+        }
+      } catch {}
+    }
+    return dateFormatted;
+  };
+
   return (
     <>
       <PageHeader
-        title="Pembelian & Stok"
-        description="Pembelian sparepart dari supplier, riwayat pergerakan stok, dan penggunaan per servis."
+        title="Catatan Stok"
+        description="Catat pembelian sparepart dari supplier, riwayat pergerakan stok, dan penggunaan per servis."
       />
 
       <Tabs defaultValue="pembelian">
         <TabsList className="grid grid-cols-2 sm:flex">
-          <TabsTrigger value="pembelian">Pembelian</TabsTrigger>
-          <TabsTrigger value="riwayat">Riwayat Stok</TabsTrigger>
-          <TabsTrigger value="penggunaan">Penggunaan</TabsTrigger>
-          <TabsTrigger value="retur">Pengembalian (Retur)</TabsTrigger>
+          <TabsTrigger value="pembelian" className="gap-1.5">
+            <ShoppingCart className="size-3.5" /> Pembelian
+          </TabsTrigger>
+          <TabsTrigger value="riwayat" className="gap-1.5">
+            <ArrowDownUp className="size-3.5" /> Riwayat Stok
+          </TabsTrigger>
+          <TabsTrigger value="penggunaan" className="gap-1.5">
+            <PackageCheck className="size-3.5" /> Penggunaan
+          </TabsTrigger>
+          <TabsTrigger value="retur" className="gap-1.5">
+            <RotateCcw className="size-3.5" /> Pengembalian (Retur)
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="pembelian" className="mt-4 grid gap-4 lg:grid-cols-[1fr_1.4fr]">
@@ -494,35 +962,53 @@ function StokAdmin() {
               <CardTitle className="flex items-center gap-2 text-base">
                 <ShoppingCart className="size-4 text-primary" /> Catat Pembelian
               </CardTitle>
+              <CardDescription>
+                Input transaksi pembelian sparepart baru dari distributor / supplier.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={simpan} className="space-y-4">
                 <div className="space-y-1.5">
-                  <Label>Sparepart</Label>
-                  <ComboboxInput
+                  <Label>
+                    Pilih Sparepart <span className="text-destructive">*</span>
+                  </Label>
+                  <Select
                     value={form.sparepartId}
-                    onChange={(v) => {
-                      const sp = sparepart.find(
-                        (s) => s.id === v || s.nama.toLowerCase() === v.toLowerCase(),
-                      );
-                      setForm({
-                        ...form,
-                        sparepartId: v,
-                        harga: form.harga === 0 && sp ? sp.harga : form.harga,
-                      });
+                    onValueChange={(val) => {
+                      const sp = sparepart.find((s) => s.id === val);
+                      setForm((prev) => ({
+                        ...prev,
+                        sparepartId: val,
+                        harga: sp ? sp.harga : prev.harga,
+                      }));
                     }}
-                    options={sparepartOptions}
-                    placeholder="Pilih atau ketik sparepart baru..."
-                  />
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Pilih sparepart..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {sparepart.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.kode} · {s.nama} ({rupiah(s.harga)})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
+
                 <div className="space-y-1.5">
-                  <Label>Supplier</Label>
-                  <Input
+                  <Label>
+                    Supplier / Distributor <span className="text-destructive">*</span>
+                  </Label>
+                  <ComboboxInput
                     value={form.supplier}
-                    onChange={(e) => setForm({ ...form, supplier: e.target.value })}
-                    placeholder="PT Sinar Pelumas"
+                    onChange={(v) => setForm((prev) => ({ ...prev, supplier: v }))}
+                    onSelectOption={(opt) => setForm((prev) => ({ ...prev, supplier: opt.label }))}
+                    options={supplierOptions}
+                    placeholder="Pilih atau ketik nama supplier..."
                   />
                 </div>
+
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label>Tanggal</Label>
@@ -536,10 +1022,11 @@ function StokAdmin() {
                     <Label>Jumlah</Label>
                     <NumberInput
                       value={form.jumlah}
-                      onChange={(v) => setForm({ ...form, jumlah: v })}
+                      onChange={(v) => setForm({ ...form, jumlah: Math.max(1, v) })}
                     />
                   </div>
                 </div>
+
                 <div className="space-y-1.5">
                   <Label>Harga Beli / Satuan</Label>
                   <NumberInput
@@ -547,10 +1034,12 @@ function StokAdmin() {
                     onChange={(v) => setForm({ ...form, harga: v })}
                   />
                 </div>
+
                 <div className="flex items-center justify-between rounded-lg bg-muted/50 px-4 py-2 text-sm">
                   <span className="font-medium">Total</span>
-                  <span className="font-display font-bold">{rupiah(form.jumlah * form.harga)}</span>
+                  <span className="font-display font-bold text-primary">{rupiah(form.jumlah * form.harga)}</span>
                 </div>
+
                 <Button type="submit" className="w-full gap-2">
                   <PackageCheck className="size-4" /> Simpan Pembelian
                 </Button>
@@ -627,51 +1116,289 @@ function StokAdmin() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="riwayat" className="mt-4">
+        <TabsContent value="riwayat" className="mt-4 space-y-4">
+          {/* STATS SUMMARY CARDS */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <Card className="bg-card">
+              <CardContent className="flex items-center gap-3 p-4">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <ArrowDownUp className="size-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground">Total Catatan Mutasi</p>
+                  <p className="text-lg font-bold">{statsRiwayat.totalMutasi} Log</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card">
+              <CardContent className="flex items-center gap-3 p-4">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                  <TrendingUp className="size-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground">Total Stok Masuk</p>
+                  <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
+                    +{statsRiwayat.stokMasuk} Unit
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card">
+              <CardContent className="flex items-center gap-3 p-4">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                  <TrendingDown className="size-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground">Stok Keluar Servis</p>
+                  <p className="text-lg font-bold text-rose-600 dark:text-rose-400">
+                    -{statsRiwayat.stokKeluarServis} Unit
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card">
+              <CardContent className="flex items-center gap-3 p-4">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                  <RotateCcw className="size-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground">Retur Supplier</p>
+                  <p className="text-lg font-bold text-amber-600 dark:text-amber-400">
+                    -{statsRiwayat.stokRetur} Unit
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card">
+              <CardContent className="flex items-center gap-3 p-4">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                  <Boxes className="size-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground">Master Sparepart</p>
+                  <p className="text-lg font-bold">{sparepart.length} Item</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <ArrowDownUp className="size-4 text-primary" /> Riwayat Pergerakan Stok
-              </CardTitle>
+            <CardHeader className="pb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <ArrowDownUp className="size-4 text-primary" /> Kartu Stok & Audit Mutasi Terpadu
+                </CardTitle>
+                <CardDescription className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs mt-1">
+                  <span>Kronologis riwayat pergerakan stok:</span>
+                  <span className="inline-flex items-center gap-1 font-medium text-emerald-600 dark:text-emerald-400">
+                    <TrendingUp className="size-3" /> Pembelian (+)
+                  </span>
+                  <span>·</span>
+                  <span className="inline-flex items-center gap-1 font-medium text-rose-600 dark:text-rose-400">
+                    <TrendingDown className="size-3" /> Pemakaian Servis (-)
+                  </span>
+                  <span>·</span>
+                  <span className="inline-flex items-center gap-1 font-medium text-amber-600 dark:text-amber-400">
+                    <RotateCcw className="size-3" /> Retur Supplier (-)
+                  </span>
+                </CardDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRefreshAll}
+                disabled={isRefreshing}
+                className="gap-1.5 self-start md:self-auto text-xs"
+              >
+                <RefreshCw className={`size-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+                Segarkan Data
+              </Button>
             </CardHeader>
-            <CardContent className="px-0">
-              {riwayatStok.length === 0 ? (
+            <CardContent className="space-y-4">
+              {/* FILTER BAR */}
+              <div className="grid gap-3 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-5">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Filter Sparepart</Label>
+                  <Select value={filterRiwayatPartId} onValueChange={setFilterRiwayatPartId}>
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue placeholder="Semua Sparepart" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="semua">Semua Sparepart</SelectItem>
+                      {sparepart.map((sp) => (
+                        <SelectItem key={sp.id} value={sp.id}>
+                          {sp.kode} · {sp.nama}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Tipe Mutasi</Label>
+                  <Select value={filterRiwayatJenis} onValueChange={setFilterRiwayatJenis}>
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="semua">Semua Mutasi</SelectItem>
+                      <SelectItem value="Masuk">Masuk (Pembelian)</SelectItem>
+                      <SelectItem value="Keluar">Keluar (Servis)</SelectItem>
+                      <SelectItem value="Retur">Pengembalian (Retur Supplier)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Dari Tanggal</Label>
+                  <Input
+                    type="date"
+                    className="h-8 text-xs"
+                    value={filterRiwayatTanggalMulai}
+                    onChange={(e) => setFilterRiwayatTanggalMulai(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Sampai Tanggal</Label>
+                  <Input
+                    type="date"
+                    className="h-8 text-xs"
+                    value={filterRiwayatTanggalAkhir}
+                    onChange={(e) => setFilterRiwayatTanggalAkhir(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Cari Kata Kunci</Label>
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-2 size-3.5 text-muted-foreground" />
+                    <Input
+                      placeholder="Cari sparepart/ref..."
+                      className="h-8 pl-8 text-xs"
+                      value={searchRiwayat}
+                      onChange={(e) => setSearchRiwayat(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {((filterRiwayatPartId !== "" && filterRiwayatPartId !== "semua") ||
+                filterRiwayatJenis !== "semua" ||
+                filterRiwayatTanggalMulai ||
+                filterRiwayatTanggalAkhir ||
+                searchRiwayat) && (
+                <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+                  <span>
+                    Menampilkan <strong>{filteredRiwayatStok.length}</strong> dari {unifiedMovements.length} mutasi
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs gap-1 text-muted-foreground hover:text-foreground"
+                    onClick={() => {
+                      setFilterRiwayatPartId("semua");
+                      setFilterRiwayatJenis("semua");
+                      setFilterRiwayatTanggalMulai("");
+                      setFilterRiwayatTanggalAkhir("");
+                      setSearchRiwayat("");
+                    }}
+                  >
+                    <X className="size-3" /> Reset Filter
+                  </Button>
+                </div>
+              )}
+
+              {/* TABLE */}
+              {filteredRiwayatStok.length === 0 ? (
                 <EmptyState
                   title="Belum ada pergerakan stok"
-                  description="Log stok masuk/keluar akan tampil di sini."
+                  description={
+                    filterRiwayatPartId !== "semua" || searchRiwayat || filterRiwayatTanggalMulai
+                      ? "Tidak ada mutasi stok yang sesuai dengan filter pencarian."
+                      : "Log mutasi stok masuk/keluar akan tampil secara otomatis di sini."
+                  }
                 />
               ) : (
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto rounded-md border">
                   <Table>
                     <TableHeader>
-                      <TableRow>
-                        <TableHead>Tanggal</TableHead>
-                        <TableHead>Sparepart</TableHead>
-                        <TableHead>Jenis</TableHead>
-                        <TableHead className="text-right">Jumlah</TableHead>
+                      <TableRow className="bg-muted/40">
+                        <TableHead>Tanggal & Waktu</TableHead>
+                        <TableHead>Kode & Nama Sparepart</TableHead>
+                        <TableHead>Tipe Mutasi</TableHead>
+                        <TableHead>No. Referensi</TableHead>
+                        <TableHead className="text-right">Kuantitas</TableHead>
+                        <TableHead className="text-right">Stok Sisa (Balance)</TableHead>
                         <TableHead>Keterangan</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {riwayatStok.map((r) => (
-                        <TableRow key={r.id}>
-                          <TableCell className="text-muted-foreground">
-                            {tanggalPanjang(r.tanggal)}
-                          </TableCell>
-                          <TableCell>{namaPart.get(r.sparepartId) ?? r.sparepartId ?? "—"}</TableCell>
-                          <TableCell
-                            className={
-                              r.jenis === "Masuk"
-                                ? "font-medium text-success"
-                                : "font-medium text-destructive"
-                            }
-                          >
-                            {r.jenis}
-                          </TableCell>
-                          <TableCell className="text-right">{r.jumlah}</TableCell>
-                          <TableCell className="text-muted-foreground">{r.keterangan}</TableCell>
-                        </TableRow>
-                      ))}
+                      {filteredRiwayatStok.map((m) => {
+                        const sisa = sisaStokMap.get(m.id);
+                        return (
+                          <TableRow key={m.id} className="hover:bg-muted/30">
+                            <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                              {formatTanggalWaktu(m.tanggal)}
+                            </TableCell>
+                            <TableCell>
+                              <div className="font-medium text-foreground">
+                                {namaPart.get(m.sparepartId) || m.sparepartId}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {(() => {
+                                const isRetur =
+                                  m.referensi?.toUpperCase().startsWith("RET") ||
+                                  m.keterangan?.toLowerCase().includes("retur");
+                                if (m.jenis === "Masuk") {
+                                  return (
+                                    <Badge className="gap-1 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 border-emerald-500/20 text-xs">
+                                      <TrendingUp className="size-3" /> Masuk
+                                    </Badge>
+                                  );
+                                }
+                                if (isRetur) {
+                                  return (
+                                    <Badge className="gap-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 border-amber-500/20 text-xs">
+                                      <RotateCcw className="size-3" /> Retur Supplier
+                                    </Badge>
+                                  );
+                                }
+                                return (
+                                  <Badge className="gap-1 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 border-rose-500/20 text-xs">
+                                    <TrendingDown className="size-3" /> Keluar
+                                  </Badge>
+                                );
+                              })()}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="font-mono text-xs">
+                                {m.referensi}
+                              </Badge>
+                            </TableCell>
+                            <TableCell
+                              className={`text-right font-mono font-semibold ${
+                                m.jenis === "Masuk"
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : "text-rose-600 dark:text-rose-400"
+                              }`}
+                            >
+                              {m.jenis === "Masuk" ? `+${m.jumlah}` : `-${m.jumlah}`}
+                            </TableCell>
+                            <TableCell className="text-right font-mono font-bold text-foreground">
+                              {sisa !== undefined ? sisa : "—"}
+                            </TableCell>
+                            <TableCell className="max-w-[220px] truncate text-xs text-muted-foreground" title={m.keterangan}>
+                              {m.keterangan}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>
@@ -680,43 +1407,153 @@ function StokAdmin() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="penggunaan" className="mt-4">
+        <TabsContent value="penggunaan" className="mt-4 space-y-4">
+          {/* STATS SUMMARY CARDS */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Card className="bg-card">
+              <CardContent className="flex items-center gap-3 p-4">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <PackageCheck className="size-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground">Total Sparepart Terpakai</p>
+                  <p className="text-lg font-bold">{statsPenggunaan.totalQty} Unit</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card">
+              <CardContent className="flex items-center gap-3 p-4">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                  <FileText className="size-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground">Pekerjaan Servis Terkait</p>
+                  <p className="text-lg font-bold">{statsPenggunaan.totalServis} Servis</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card">
+              <CardContent className="flex items-center gap-3 p-4">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle2 className="size-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground">Sinkronisasi Database</p>
+                  <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                    Otomatis dari Operasional Servis
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Penggunaan Sparepart per Servis</CardTitle>
+            <CardHeader className="pb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <CardTitle className="text-base">Penggunaan Sparepart per Servis</CardTitle>
+                <CardDescription>
+                  Daftar mutasi stok keluar yang tercatat otomatis dari pekerjaan dan item servis pelanggan.
+                </CardDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  await refreshPenggunaan().catch(() => {});
+                  toast.success("Data penggunaan sparepart berhasil diperbarui");
+                }}
+                className="gap-1.5 self-start md:self-auto text-xs"
+              >
+                <RefreshCw className="size-3.5" />
+                Segarkan Data
+              </Button>
             </CardHeader>
-            <CardContent className="px-0">
-              {penggunaan.length === 0 ? (
+            <CardContent className="space-y-4">
+              {/* FILTER & SEARCH */}
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="relative flex-1 max-w-sm">
+                  <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Cari No. Servis, sparepart, mekanik, pelanggan..."
+                    className="pl-8 text-xs"
+                    value={searchPenggunaan}
+                    onChange={(e) => setSearchPenggunaan(e.target.value)}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Select value={filterPenggunaanStatus} onValueChange={setFilterPenggunaanStatus}>
+                    <SelectTrigger className="h-9 w-44 text-xs">
+                      <SelectValue placeholder="Status Servis" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="semua">Semua Status Servis</SelectItem>
+                      <SelectItem value="Diproses">Diproses</SelectItem>
+                      <SelectItem value="Menunggu Pembayaran">Menunggu Pembayaran</SelectItem>
+                      <SelectItem value="Selesai">Selesai</SelectItem>
+                      <SelectItem value="Selesai Dibayar">Selesai Dibayar / Lunas</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {filteredPenggunaan.length === 0 ? (
                 <EmptyState
-                  title="Belum ada pemakaian"
-                  description="Pemakaian sparepart tercatat otomatis dari operasional servis."
+                  title="Belum ada data pemakaian sparepart"
+                  description={
+                    searchPenggunaan || filterPenggunaanStatus !== "semua"
+                      ? "Tidak ada data pemakaian yang cocok dengan pencarian."
+                      : "Pemakaian sparepart akan tercatat otomatis saat admin/mekanik menambahkan sparepart pada transaksi servis pelanggan."
+                  }
                 />
               ) : (
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto rounded-md border">
                   <Table>
                     <TableHeader>
-                      <TableRow>
+                      <TableRow className="bg-muted/40">
                         <TableHead>Tanggal</TableHead>
-                        <TableHead>No. Servis</TableHead>
-                        <TableHead>Sparepart</TableHead>
-                        <TableHead className="text-right">Jumlah</TableHead>
-                        <TableHead>Mekanik</TableHead>
-                        <TableHead>Keterangan</TableHead>
+                        <TableHead>No. Servis / SPK</TableHead>
+                        <TableHead>Sparepart Digunakan</TableHead>
+                        <TableHead>Pelanggan & Mekanik</TableHead>
+                        <TableHead className="text-right">Jumlah Keluar</TableHead>
+                        <TableHead>Status Servis</TableHead>
+                        <TableHead>Keterangan Pekerjaan</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {penggunaan.map((p) => (
-                        <TableRow key={p.id}>
-                          <TableCell className="text-muted-foreground">
+                      {filteredPenggunaan.map((p) => (
+                        <TableRow key={p.id} className="hover:bg-muted/30">
+                          <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                             {tanggalPanjang(p.tanggal)}
                           </TableCell>
-                          <TableCell className="font-medium">{p.servisNomor}</TableCell>
-                          <TableCell>{namaPart.get(p.sparepartId) ?? p.sparepartId ?? "—"}</TableCell>
-                          <TableCell className="text-right">{p.jumlah}</TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {p.mekanik || "—"}
+                          <TableCell>
+                            <Badge variant="outline" className="font-mono text-xs font-semibold">
+                              {p.servisNomor}
+                            </Badge>
                           </TableCell>
-                          <TableCell className="text-muted-foreground">{p.keterangan}</TableCell>
+                          <TableCell>
+                            <div className="font-medium text-foreground">
+                              {namaPart.get(p.sparepartId) ?? p.sparepartId ?? "—"}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="text-xs">
+                              <div className="font-medium text-foreground">{p.pelanggan || "—"}</div>
+                              <div className="flex items-center gap-1 text-muted-foreground mt-0.5">
+                                <UserCheck className="size-3" /> Mekanik: {p.mekanik || "—"}
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right font-mono font-bold text-rose-600 dark:text-rose-400">
+                            -{p.jumlah} Unit
+                          </TableCell>
+                          <TableCell>
+                            {renderStatusServisBadge(p.statusServis)}
+                          </TableCell>
+                          <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground" title={p.keterangan}>
+                            {p.keterangan}
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1154,7 +1991,7 @@ function StokAdmin() {
         open={!!hapusId}
         onOpenChange={(open) => !open && setHapusId(null)}
         title="Hapus Catatan Pembelian?"
-        description="Menghapus pembelian ini akan otomatis mengembalikan (rollback) stok sparepart yang pernah tercatat masuk dari transaksi ini."
+        description="Apakah Anda yakin ingin menghapus catatan pembelian ini dari daftar?"
         onConfirm={handleKonfirmasiHapus}
       />
 

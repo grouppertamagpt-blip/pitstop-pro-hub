@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { Inbox, CalendarClock, Loader2, CheckCircle2, Package, ArrowRight } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
@@ -34,7 +35,32 @@ export const Route = createFileRoute("/_shell/admin/dashboard")({
 });
 
 function DashboardAdmin() {
-  const { servis, sparepart, booking } = useStore();
+  const { servis, sparepart, booking, refreshBooking, refreshServis, refreshSparepart } = useStore();
+
+  useEffect(() => {
+    refreshBooking?.().catch(() => {});
+    refreshServis?.().catch(() => {});
+    refreshSparepart?.().catch(() => {});
+
+    const handleSync = () => {
+      refreshBooking?.().catch(() => {});
+      refreshServis?.().catch(() => {});
+      refreshSparepart?.().catch(() => {});
+    };
+
+    window.addEventListener("appbenk_booking_updated", handleSync);
+    window.addEventListener("appbenk_servis_updated", handleSync);
+    window.addEventListener("appbenk_sparepart_updated", handleSync);
+
+    const interval = setInterval(handleSync, 10000);
+    return () => {
+      window.removeEventListener("appbenk_booking_updated", handleSync);
+      window.removeEventListener("appbenk_servis_updated", handleSync);
+      window.removeEventListener("appbenk_sparepart_updated", handleSync);
+      clearInterval(interval);
+    };
+  }, [refreshBooking, refreshServis, refreshSparepart]);
+
   const hariIni = new Date().toISOString().slice(0, 10);
 
   const stats = [

@@ -4,7 +4,6 @@ import {
   Building2,
   Plus,
   Search,
-  Crown,
   ShieldCheck,
   Power,
   PowerOff,
@@ -55,7 +54,7 @@ export const Route = createFileRoute("/_shell/superadmin/klien")({
       { title: "Manajemen Klien Bengkel — Super Admin AppBenk" },
       {
         name: "description",
-        content: "Kelola bengkel mitra, paket Basic vs Premium, dan pendaftaran klien baru.",
+        content: "Kelola bengkel mitra, status operasional, dan pendaftaran klien baru.",
       },
     ],
   }),
@@ -66,7 +65,6 @@ function SuperAdminKlienPage() {
   const [clients, setClients] = useState<BengkelRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [filterPaket, setFilterPaket] = useState<"semua" | PaketBengkel>("semua");
   const [filterStatus, setFilterStatus] = useState<"semua" | StatusKlien>("semua");
 
   // Modal Detail
@@ -108,23 +106,11 @@ function SuperAdminKlienPage() {
         (c.owner_nama && c.owner_nama.toLowerCase().includes(search.toLowerCase())) ||
         (c.id_bengkel && c.id_bengkel.toLowerCase().includes(search.toLowerCase()));
 
-      const matchPaket = filterPaket === "semua" || c.paket === filterPaket;
       const matchStatus = filterStatus === "semua" || c.status === filterStatus;
 
-      return matchSearch && matchPaket && matchStatus;
+      return matchSearch && matchStatus;
     });
-  }, [clients, search, filterPaket, filterStatus]);
-
-  const handleToggleTier = async (client: BengkelRow) => {
-    const nextTier: PaketBengkel = client.paket === "Premium" ? "Basic" : "Premium";
-    const success = await superAdminService.updateBengkelTier(client.id_bengkel, nextTier);
-    if (success) {
-      toast.success(
-        `Paket ${client.nama_bengkel} berhasil diubah ke ${nextTier}!`,
-      );
-      loadClients();
-    }
-  };
+  }, [clients, search, filterStatus]);
 
   const handleToggleStatus = async (client: BengkelRow) => {
     const nextStatus: StatusKlien = client.status === "Aktif" ? "Nonaktif" : "Aktif";
@@ -181,7 +167,7 @@ function SuperAdminKlienPage() {
     <>
       <PageHeader
         title="Manajemen Klien Bengkel"
-        description="Kelola seluruh bengkel mitra yang terdaftar di platform AppBenk, pengaturan paket Basic vs Premium, dan pendaftaran klien baru."
+        description="Kelola seluruh bengkel mitra yang terdaftar di platform AppBenk, status operasional, dan pendaftaran klien baru."
         action={
           <Button onClick={() => setAddModalOpen(true)} className="gap-2">
             <Plus className="size-4" /> Tambah Bengkel Baru
@@ -202,19 +188,8 @@ function SuperAdminKlienPage() {
               />
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Select value={filterPaket} onValueChange={(v) => setFilterPaket(v as any)}>
-                <SelectTrigger className="w-32 text-xs">
-                  <SelectValue placeholder="Paket" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="semua">Semua Paket</SelectItem>
-                  <SelectItem value="Basic">Basic</SelectItem>
-                  <SelectItem value="Premium">Premium</SelectItem>
-                </SelectContent>
-              </Select>
-
               <Select value={filterStatus} onValueChange={(v) => setFilterStatus(v as any)}>
-                <SelectTrigger className="w-32 text-xs">
+                <SelectTrigger className="w-36 text-xs">
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
                 <SelectContent>
@@ -248,7 +223,6 @@ function SuperAdminKlienPage() {
                 </TableRow>
               ) : (
                 filteredClients.map((client) => {
-                  const isPremium = client.paket === "Premium";
                   const isAktif = client.status !== "Nonaktif";
 
                   return (
@@ -273,13 +247,9 @@ function SuperAdminKlienPage() {
                       <TableCell>
                         <Badge
                           variant="outline"
-                          className={`gap-1 text-[10px] ${
-                            isPremium
-                              ? "border-amber-500/40 bg-amber-500/10 font-bold text-amber-700 dark:text-amber-300"
-                              : "border-slate-300 bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                          }`}
+                          className="gap-1 text-[10px] border-slate-300 bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
                         >
-                          {isPremium ? <Crown className="size-3 text-amber-500" /> : <ShieldCheck className="size-3 text-slate-500" />}
+                          <ShieldCheck className="size-3 text-slate-500" />
                           {client.paket || "Basic"}
                         </Badge>
                       </TableCell>
@@ -316,20 +286,6 @@ function SuperAdminKlienPage() {
                             }}
                           >
                             <Eye className="size-3.5 mr-1" /> Detail
-                          </Button>
-
-                          {/* Toggle Paket */}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className={`h-7 px-2 text-[11px] ${
-                              isPremium
-                                ? "border-amber-500/30 text-amber-700 hover:bg-amber-50 dark:text-amber-300"
-                                : "text-primary"
-                            }`}
-                            onClick={() => handleToggleTier(client)}
-                          >
-                            {isPremium ? "Downgrade Basic" : "Upgrade Premium"}
                           </Button>
 
                           {/* Toggle Status Aktif */}
@@ -391,11 +347,9 @@ function SuperAdminKlienPage() {
               </div>
 
               <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
-                <p className="font-semibold text-primary">Akses Fitur Paket</p>
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  {selectedClient.paket === "Premium"
-                    ? "✓ Fitur Laporan Keuntungan, Margin Laba, dan Analitik Terbuka Penuh."
-                    : "Laporan Keuntungan terkunci (Upgrade ke Premium untuk membuka)."}
+                <p className="font-semibold text-primary">Paket Layanan Kemitraan</p>
+                <p className="mt-1 text-[11px] text-muted-foreground leading-relaxed">
+                  Paket Basic Standar aktif mencakup modul operasional bengkel: pendaftaran, servis &amp; antrean, inventori, kasir &amp; pembayaran, dan nota digital.
                 </p>
               </div>
             </div>
@@ -414,7 +368,7 @@ function SuperAdminKlienPage() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Plus className="size-5 text-primary" /> Daftarkan Bengkel & Owner Baru
+              <Plus className="size-5 text-primary" /> Daftarkan Bengkel &amp; Owner Baru
             </DialogTitle>
           </DialogHeader>
 
@@ -439,19 +393,13 @@ function SuperAdminKlienPage() {
                 />
               </div>
               <div className="space-y-1">
-                <Label>Pilihan Paket</Label>
-                <Select
-                  value={newBengkel.paket}
-                  onValueChange={(v) => setNewBengkel({ ...newBengkel, paket: v as PaketBengkel })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Basic">Basic (Standar)</SelectItem>
-                    <SelectItem value="Premium">Premium (Analitik Penuh)</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label>Paket Kemitraan</Label>
+                <div className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-muted/40 px-3 py-1 text-xs">
+                  <span className="font-medium text-foreground">Paket Basic (Standar)</span>
+                  <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/30">
+                    Standar Operasional
+                  </Badge>
+                </div>
               </div>
             </div>
 

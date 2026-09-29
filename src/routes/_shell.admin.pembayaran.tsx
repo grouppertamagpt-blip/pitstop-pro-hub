@@ -11,13 +11,8 @@ import {
   Clock,
   Banknote,
   Maximize2,
-  Download,
   AlertCircle,
-  Filter,
-  Search,
-  FileText,
   Check,
-  ExternalLink,
   RefreshCw,
   Phone,
   Mail,
@@ -27,9 +22,8 @@ import {
 import { toast } from "sonner";
 import { PageHeader, EmptyState } from "@/components/page-header";
 import { SearchBar } from "@/components/search-bar";
-import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -49,7 +43,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useAuth } from "@/lib/auth";
-import { useStore, rupiah, tanggalPanjang, type Pembayaran, type Servis } from "@/lib/store";
+import { useStore, rupiah, tanggalPanjang, type Pembayaran } from "@/lib/store";
 
 export const Route = createFileRoute("/_shell/admin/pembayaran")({
   validateSearch: (search: Record<string, unknown>): { filter?: string; trx?: string } => {
@@ -72,12 +66,49 @@ export const Route = createFileRoute("/_shell/admin/pembayaran")({
 
 type FilterType = "semua" | "menunggu_verifikasi" | "lunas" | "ditolak" | "cash" | "transfer" | "qris";
 
+// Helper penyeragaman status pembayaran
+const normalizeStatus = (status?: string): "menunggu_verifikasi" | "lunas" | "ditolak" | "lainnya" => {
+  if (!status) return "menunggu_verifikasi";
+  const s = status.toLowerCase().trim();
+  if (s.includes("menunggu") || s.includes("pending")) return "menunggu_verifikasi";
+  if (
+    s.includes("lunas") ||
+    s.includes("diverifikasi") ||
+    s.includes("terverifikasi") ||
+    s.includes("success") ||
+    s.includes("selesai")
+  ) {
+    return "lunas";
+  }
+  if (s.includes("tolak") || s.includes("reject") || s.includes("batal")) return "ditolak";
+  return "lainnya";
+};
+
+// Helper penyeragaman metode pembayaran
+const normalizeMethod = (metode?: string): "qris" | "transfer" | "cash" | "lainnya" => {
+  if (!metode) return "cash";
+  const m = metode.toLowerCase().trim();
+  if (m.includes("qris")) return "qris";
+  if (m.includes("transfer") || m.includes("bank")) return "transfer";
+  if (m.includes("cash") || m.includes("tunai")) return "cash";
+  return "lainnya";
+};
+
 function AdminPembayaranPage() {
   const { user } = useAuth();
   const search = Route.useSearch();
-  const { servis, pembayaran, verifikasiPembayaran, pelanggan, kendaraan } = useStore();
+  const {
+    servis,
+    pembayaran,
+    verifikasiPembayaran,
+    pelanggan,
+    refreshPembayaran,
+    refreshServis,
+  } = useStore();
 
   const workshopId = user?.bengkelId || user?.workshopId || "bengkel-001";
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // State
   const [filter, setFilter] = useState<FilterType>(() => {
@@ -96,6 +127,44 @@ function AdminPembayaranPage() {
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [alasanPenolakan, setAlasanPenolakan] = useState("");
   const [zoomProof, setZoomProof] = useState<string | null>(null);
+
+  // Fungsi sinkronisasi / penyegaran data pembayaran & servis dari server
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await Promise.all([
+        refreshPembayaran(workshopId),
+        refreshServis(),
+      ]);
+    } catch (err) {
+      console.warn("Gagal menyegarkan data pembayaran:", err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // Auto-fetch data pada saat halaman dibuka & subscribe event updates
+  useEffect(() => {
+    handleRefresh();
+
+    const handleUpdateEvent = () => {
+      handleRefresh();
+    };
+
+    window.addEventListener("appbenk_pembayaran_updated", handleUpdateEvent);
+    window.addEventListener("appbenk_servis_updated", handleUpdateEvent);
+    window.addEventListener("storage", handleUpdateEvent);
+
+    // Polling fallback 10 detik untuk memastikan verifikasi pembayaran selalu up-to-date
+    const interval = setInterval(handleUpdateEvent, 10000);
+
+    return () => {
+      window.removeEventListener("appbenk_pembayaran_updated", handleUpdateEvent);
+      window.removeEventListener("appbenk_servis_updated", handleUpdateEvent);
+      window.removeEventListener("storage", handleUpdateEvent);
+      clearInterval(interval);
+    };
+  }, [workshopId]);
 
   // Auto-open if search.trx is present
   useEffect(() => {
@@ -127,21 +196,33 @@ function AdminPembayaranPage() {
     return new Set(workshopServis.map((s) => s.id));
   }, [workshopServis]);
 
-  // Filter pembayaran milik bengkel aktif
+  // Filter pembayaran milik bengkel aktif (multi-tenancy resilient)
   const listPembayaran = useMemo(() => {
-    return pembayaran.filter((p) => workshopServisIds.has(p.servisId));
-  }, [pembayaran, workshopServisIds]);
+    return pembayaran.filter((p) => {
+      if (user?.role === "super_admin") return true;
+      // 1. Cocokkan direct bengkelId jika tersedia di baris pembayaran
+      if (p.bengkelId && p.bengkelId === workshopId) return true;
+      // 2. Cocokkan melalui set ID servis bengkel aktif
+      if (p.servisId && workshopServisIds.has(p.servisId)) return true;
+      // 3. Cari langsung di array servis jika set belum sempat terupdate
+      const s = servis.find((item) => item.id === p.servisId);
+      if (s && (!s.bengkelId || s.bengkelId === workshopId)) return true;
+      return false;
+    });
+  }, [pembayaran, workshopServisIds, workshopId, user?.role, servis]);
 
-  // Perhitungan badge status
+  // Perhitungan badge status & counter filter secara toleran terhadap variasi case status
   const counts = useMemo(() => {
     return {
       semua: listPembayaran.length,
-      menunggu_verifikasi: listPembayaran.filter((p) => p.status === "Menunggu Verifikasi").length,
-      lunas: listPembayaran.filter((p) => p.status === "Lunas").length,
-      ditolak: listPembayaran.filter((p) => p.status === "Bukti Ditolak").length,
-      cash: listPembayaran.filter((p) => p.metode === "Cash").length,
-      transfer: listPembayaran.filter((p) => p.metode === "Transfer Bank").length,
-      qris: listPembayaran.filter((p) => p.metode === "QRIS").length,
+      menunggu_verifikasi: listPembayaran.filter(
+        (p) => normalizeStatus(p.status) === "menunggu_verifikasi"
+      ).length,
+      lunas: listPembayaran.filter((p) => normalizeStatus(p.status) === "lunas").length,
+      ditolak: listPembayaran.filter((p) => normalizeStatus(p.status) === "ditolak").length,
+      cash: listPembayaran.filter((p) => normalizeMethod(p.metode) === "cash").length,
+      transfer: listPembayaran.filter((p) => normalizeMethod(p.metode) === "transfer").length,
+      qris: listPembayaran.filter((p) => normalizeMethod(p.metode) === "qris").length,
     };
   }, [listPembayaran]);
 
@@ -150,29 +231,34 @@ function AdminPembayaranPage() {
     let result = listPembayaran;
 
     if (filter === "menunggu_verifikasi") {
-      result = result.filter((p) => p.status === "Menunggu Verifikasi");
+      result = result.filter((p) => normalizeStatus(p.status) === "menunggu_verifikasi");
     } else if (filter === "lunas") {
-      result = result.filter((p) => p.status === "Lunas");
+      result = result.filter((p) => normalizeStatus(p.status) === "lunas");
     } else if (filter === "ditolak") {
-      result = result.filter((p) => p.status === "Bukti Ditolak");
+      result = result.filter((p) => normalizeStatus(p.status) === "ditolak");
     } else if (filter === "cash") {
-      result = result.filter((p) => p.metode === "Cash");
+      result = result.filter((p) => normalizeMethod(p.metode) === "cash");
     } else if (filter === "transfer") {
-      result = result.filter((p) => p.metode === "Transfer Bank");
+      result = result.filter((p) => normalizeMethod(p.metode) === "transfer");
     } else if (filter === "qris") {
-      result = result.filter((p) => p.metode === "QRIS");
+      result = result.filter((p) => normalizeMethod(p.metode) === "qris");
     }
 
     if (cari.trim()) {
       const q = cari.toLowerCase().trim();
       result = result.filter((p) => {
         const srv = workshopServis.find((s) => s.id === p.servisId);
+        const noTrx = (p.noTransaksi || "").toLowerCase();
+        const srvNomor = (srv?.nomor || p.nomorServis || "").toLowerCase();
+        const custName = (srv?.pelanggan || p.pelanggan || "").toLowerCase();
+        const plat = (srv?.plat || p.plat || "").toLowerCase();
+        const kendaraan = (srv?.kendaraan || p.kendaraan || "").toLowerCase();
         return (
-          p.noTransaksi.toLowerCase().includes(q) ||
-          srv?.nomor.toLowerCase().includes(q) ||
-          srv?.pelanggan.toLowerCase().includes(q) ||
-          srv?.plat.toLowerCase().includes(q) ||
-          srv?.kendaraan.toLowerCase().includes(q)
+          noTrx.includes(q) ||
+          srvNomor.includes(q) ||
+          custName.includes(q) ||
+          plat.includes(q) ||
+          kendaraan.includes(q)
         );
       });
     }
@@ -188,9 +274,12 @@ function AdminPembayaranPage() {
 
   // Selected Customer detail
   const currentCustomer = useMemo(() => {
-    if (!currentServis) return null;
-    return pelanggan.find((c) => c.nama.toLowerCase() === currentServis.pelanggan.toLowerCase()) || null;
-  }, [currentServis, pelanggan]);
+    const custName = currentServis?.pelanggan || selectedPmb?.pelanggan;
+    if (!custName) return null;
+    return (
+      pelanggan.find((c) => c.nama.toLowerCase() === custName.toLowerCase()) || null
+    );
+  }, [currentServis, selectedPmb, pelanggan]);
 
   const handleOpenPeriksa = (pmb: Pembayaran) => {
     setSelectedPmb(pmb);
@@ -198,24 +287,46 @@ function AdminPembayaranPage() {
     setDetailModalOpen(true);
   };
 
-  const handleApprove = () => {
+  const handleApprove = async () => {
     if (!selectedPmb) return;
-    verifikasiPembayaran(selectedPmb.servisId, true, undefined, user?.nama || "Admin");
-    toast.success(`Pembayaran transaksi ${selectedPmb.noTransaksi} berhasil disetujui (Lunas).`);
-    setConfirmApproveOpen(false);
-    setDetailModalOpen(false);
+    setIsSubmitting(true);
+    try {
+      await verifikasiPembayaran(selectedPmb.servisId, true, undefined, user?.nama || "Admin");
+      toast.success(`Pembayaran transaksi ${selectedPmb.noTransaksi} berhasil disetujui (Lunas).`);
+      setConfirmApproveOpen(false);
+      setDetailModalOpen(false);
+      await Promise.all([
+        refreshPembayaran(workshopId),
+        refreshServis(),
+      ]);
+    } catch (err: any) {
+      toast.error(`Gagal menyetujui pembayaran: ${err?.message || "Terjadi kesalahan"}`);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleReject = () => {
+  const handleReject = async () => {
     if (!selectedPmb) return;
     if (!alasanPenolakan.trim()) {
       toast.error("Alasan penolakan pembayaran wajib diisi.");
       return;
     }
-    verifikasiPembayaran(selectedPmb.servisId, false, alasanPenolakan.trim(), user?.nama || "Admin");
-    toast.info(`Pembayaran transaksi ${selectedPmb.noTransaksi} telah ditolak.`);
-    setRejectModalOpen(false);
-    setDetailModalOpen(false);
+    setIsSubmitting(true);
+    try {
+      await verifikasiPembayaran(selectedPmb.servisId, false, alasanPenolakan.trim(), user?.nama || "Admin");
+      toast.info(`Pembayaran transaksi ${selectedPmb.noTransaksi} telah ditolak.`);
+      setRejectModalOpen(false);
+      setDetailModalOpen(false);
+      await Promise.all([
+        refreshPembayaran(workshopId),
+        refreshServis(),
+      ]);
+    } catch (err: any) {
+      toast.error(`Gagal menolak pembayaran: ${err?.message || "Terjadi kesalahan"}`);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -225,7 +336,7 @@ function AdminPembayaranPage() {
         description="Kelola dan lakukan persetujuan manual (manual approval) untuk pembayaran QRIS, Transfer Bank, dan Cash."
       />
 
-      {/* Filter Tabs */}
+      {/* Filter Tabs & Search Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-1.5 rounded-xl border bg-muted/30 p-1.5">
           <Button
@@ -302,12 +413,25 @@ function AdminPembayaranPage() {
           </Button>
         </div>
 
-        <div className="w-full sm:w-72">
-          <SearchBar
-            value={cari}
-            onChange={setCari}
-            placeholder="Cari transaksi, servis, pelanggan..."
-          />
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="w-full sm:w-72">
+            <SearchBar
+              value={cari}
+              onChange={setCari}
+              placeholder="Cari transaksi, servis, pelanggan..."
+            />
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="h-10 gap-1.5 shrink-0"
+            title="Segarkan data transaksi pembayaran"
+          >
+            <RefreshCw className={`size-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+            <span className="hidden sm:inline">Segarkan</span>
+          </Button>
         </div>
       </div>
 
@@ -344,9 +468,17 @@ function AdminPembayaranPage() {
               <TableBody>
                 {filteredData.map((pmb) => {
                   const srv = workshopServis.find((s) => s.id === pmb.servisId);
-                  const isPending = pmb.status === "Menunggu Verifikasi";
-                  const isLunas = pmb.status === "Lunas";
-                  const isDitolak = pmb.status === "Bukti Ditolak";
+                  const statusNorm = normalizeStatus(pmb.status);
+                  const isPending = statusNorm === "menunggu_verifikasi";
+                  const isLunas = statusNorm === "lunas";
+                  const isDitolak = statusNorm === "ditolak";
+                  const methodNorm = normalizeMethod(pmb.metode);
+
+                  const customerName = srv?.pelanggan || pmb.pelanggan || "Pelanggan";
+                  const vehicleDesc = srv?.kendaraan || pmb.kendaraan || "Kendaraan";
+                  const platNo = srv?.plat || pmb.plat || "—";
+                  const serviceNo = srv?.nomor || pmb.nomorServis || pmb.servisId || "—";
+                  const serviceType = srv?.jenis || "Servis";
 
                   return (
                     <TableRow key={pmb.id} className={isPending ? "bg-amber-500/5 font-medium" : ""}>
@@ -355,35 +487,35 @@ function AdminPembayaranPage() {
                       </TableCell>
                       <TableCell>
                         <span className="font-semibold text-foreground block">
-                          {srv?.pelanggan || "—"}
+                          {customerName}
                         </span>
                         <span className="text-[11px] text-muted-foreground">
-                          {srv?.jenis || "Servis"}
+                          {serviceType}
                         </span>
                       </TableCell>
                       <TableCell>
                         <span className="block text-xs font-medium">
-                          {srv?.kendaraan || "Kendaraan"}
+                          {vehicleDesc}
                         </span>
                         <span className="font-mono text-[11px] text-muted-foreground uppercase">
-                          {srv?.plat || "—"}
+                          {platNo}
                         </span>
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">
-                        {srv?.nomor || "—"}
+                        {serviceNo}
                       </TableCell>
                       <TableCell>
-                        {pmb.metode === "QRIS" && (
+                        {methodNorm === "qris" && (
                           <Badge variant="outline" className="gap-1 border-purple-500 text-purple-600 bg-purple-50 dark:bg-purple-950/30">
                             <QrCode className="size-3" /> QRIS
                           </Badge>
                         )}
-                        {pmb.metode === "Transfer Bank" && (
+                        {methodNorm === "transfer" && (
                           <Badge variant="outline" className="gap-1 border-blue-500 text-blue-600 bg-blue-50 dark:bg-blue-950/30">
                             <Building2 className="size-3" /> Transfer
                           </Badge>
                         )}
-                        {pmb.metode === "Cash" && (
+                        {methodNorm === "cash" && (
                           <Badge variant="outline" className="gap-1 border-emerald-500 text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30">
                             <Banknote className="size-3" /> Cash
                           </Badge>
@@ -453,7 +585,7 @@ function AdminPembayaranPage() {
             </DialogTitle>
           </DialogHeader>
 
-          {selectedPmb && currentServis && (
+          {selectedPmb && (
             <div className="space-y-6 py-2 text-sm">
               {/* Status Header Banner */}
               <div className="flex items-center justify-between rounded-xl border p-3.5 bg-muted/30">
@@ -462,17 +594,17 @@ function AdminPembayaranPage() {
                     Status Pembayaran
                   </span>
                   <div className="flex items-center gap-2 mt-0.5">
-                    {selectedPmb.status === "Menunggu Verifikasi" && (
+                    {normalizeStatus(selectedPmb.status) === "menunggu_verifikasi" && (
                       <Badge className="bg-amber-500 text-white gap-1">
                         <Clock className="size-3" /> Menunggu Verifikasi Admin
                       </Badge>
                     )}
-                    {selectedPmb.status === "Lunas" && (
+                    {normalizeStatus(selectedPmb.status) === "lunas" && (
                       <Badge className="bg-emerald-600 text-white gap-1">
                         <CheckCircle2 className="size-3" /> Pembayaran Lunas
                       </Badge>
                     )}
-                    {selectedPmb.status === "Bukti Ditolak" && (
+                    {normalizeStatus(selectedPmb.status) === "ditolak" && (
                       <Badge variant="destructive" className="gap-1">
                         <XCircle className="size-3" /> Pembayaran Ditolak
                       </Badge>
@@ -500,7 +632,9 @@ function AdminPembayaranPage() {
                     <User className="size-3.5 text-primary" /> Informasi Pelanggan
                   </h4>
                   <div className="space-y-1 text-xs">
-                    <p className="font-bold text-sm text-foreground">{currentServis.pelanggan}</p>
+                    <p className="font-bold text-sm text-foreground">
+                      {currentServis?.pelanggan || selectedPmb.pelanggan || "Pelanggan"}
+                    </p>
                     <p className="text-muted-foreground flex items-center gap-1">
                       <Mail className="size-3" /> {currentCustomer?.email || "email@pelanggan.com"}
                     </p>
@@ -515,9 +649,15 @@ function AdminPembayaranPage() {
                     <Car className="size-3.5 text-primary" /> Kendaraan & Servis
                   </h4>
                   <div className="space-y-1 text-xs">
-                    <p className="font-bold text-sm text-foreground">{currentServis.kendaraan}</p>
-                    <p className="font-mono text-muted-foreground">Plat: {currentServis.plat}</p>
-                    <p className="text-muted-foreground">No. Servis: <span className="font-mono">{currentServis.nomor}</span></p>
+                    <p className="font-bold text-sm text-foreground">
+                      {currentServis?.kendaraan || selectedPmb.kendaraan || "Kendaraan"}
+                    </p>
+                    <p className="font-mono text-muted-foreground">
+                      Plat: {currentServis?.plat || selectedPmb.plat || "—"}
+                    </p>
+                    <p className="text-muted-foreground">
+                      No. Servis: <span className="font-mono">{currentServis?.nomor || selectedPmb.nomorServis || selectedPmb.servisId}</span>
+                    </p>
                   </div>
                 </div>
               </div>
@@ -532,9 +672,9 @@ function AdminPembayaranPage() {
                   <div>
                     <span className="text-muted-foreground block">Metode Pembayaran:</span>
                     <span className="font-semibold text-foreground text-sm flex items-center gap-1 mt-0.5">
-                      {selectedPmb.metode === "QRIS" && <QrCode className="size-4 text-purple-600" />}
-                      {selectedPmb.metode === "Transfer Bank" && <Building2 className="size-4 text-blue-600" />}
-                      {selectedPmb.metode === "Cash" && <Banknote className="size-4 text-emerald-600" />}
+                      {normalizeMethod(selectedPmb.metode) === "qris" && <QrCode className="size-4 text-purple-600" />}
+                      {normalizeMethod(selectedPmb.metode) === "transfer" && <Building2 className="size-4 text-blue-600" />}
+                      {normalizeMethod(selectedPmb.metode) === "cash" && <Banknote className="size-4 text-emerald-600" />}
                       {selectedPmb.metode}
                     </span>
                   </div>
@@ -560,7 +700,7 @@ function AdminPembayaranPage() {
                   Bukti Pembayaran Pelanggan
                 </Label>
 
-                {selectedPmb.metode === "Cash" ? (
+                {normalizeMethod(selectedPmb.metode) === "cash" ? (
                   <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4 text-emerald-950 dark:text-emerald-200">
                     <div className="flex items-start gap-3">
                       <Banknote className="size-6 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
@@ -583,7 +723,7 @@ function AdminPembayaranPage() {
                       />
                     </div>
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-muted-foreground">Klik perbesar untuk melihat detail struk transfer</span>
+                      <span className="text-muted-foreground">Klik perbesar untuk melihat detail struk pembayaran</span>
                       <Button
                         variant="outline"
                         size="sm"
@@ -605,17 +745,19 @@ function AdminPembayaranPage() {
           )}
 
           <DialogFooter className="flex-col sm:flex-row gap-2 border-t pt-4">
-            {selectedPmb?.status === "Menunggu Verifikasi" ? (
+            {normalizeStatus(selectedPmb?.status) === "menunggu_verifikasi" ? (
               <>
                 <Button
                   variant="destructive"
                   onClick={() => setRejectModalOpen(true)}
+                  disabled={isSubmitting}
                   className="gap-1.5 flex-1"
                 >
                   <XCircle className="size-4" /> Tolak Pembayaran
                 </Button>
                 <Button
                   onClick={() => setConfirmApproveOpen(true)}
+                  disabled={isSubmitting}
                   className="gap-1.5 flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
                 >
                   <CheckCircle2 className="size-4" /> Setujui Pembayaran
@@ -650,11 +792,20 @@ function AdminPembayaranPage() {
             </p>
           </div>
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setConfirmApproveOpen(false)}>
+            <Button variant="outline" onClick={() => setConfirmApproveOpen(false)} disabled={isSubmitting}>
               Batal
             </Button>
-            <Button onClick={handleApprove} className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5">
-              <Check className="size-4" /> Ya, Setujui Transaksi
+            <Button
+              onClick={handleApprove}
+              disabled={isSubmitting}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
+            >
+              {isSubmitting ? (
+                <RefreshCw className="size-4 animate-spin" />
+              ) : (
+                <Check className="size-4" />
+              )}
+              Ya, Setujui Transaksi
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -688,16 +839,21 @@ function AdminPembayaranPage() {
             </div>
           </div>
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setRejectModalOpen(false)}>
+            <Button variant="outline" onClick={() => setRejectModalOpen(false)} disabled={isSubmitting}>
               Batal
             </Button>
             <Button
               variant="destructive"
               onClick={handleReject}
-              disabled={!alasanPenolakan.trim()}
+              disabled={!alasanPenolakan.trim() || isSubmitting}
               className="gap-1.5"
             >
-              <XCircle className="size-4" /> Konfirmasi Penolakan
+              {isSubmitting ? (
+                <RefreshCw className="size-4 animate-spin" />
+              ) : (
+                <XCircle className="size-4" />
+              )}
+              Konfirmasi Penolakan
             </Button>
           </DialogFooter>
         </DialogContent>

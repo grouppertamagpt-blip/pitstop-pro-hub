@@ -6,10 +6,17 @@
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
+// Auto-detect production deployment platform (Vercel, Netlify, Node server, or custom preset)
+const isVercel = Boolean(process.env.VERCEL || process.env.NOW_BUILDER);
+const isNetlify = Boolean(process.env.NETLIFY);
+const preset = process.env.NITRO_PRESET || (isVercel ? "vercel" : isNetlify ? "netlify" : undefined);
+
 export default defineConfig({
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  ...(preset ? { nitro: { preset } } : {}),
 });
+

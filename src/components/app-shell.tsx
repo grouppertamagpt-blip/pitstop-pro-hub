@@ -13,6 +13,7 @@ import {
   CalendarX,
   CalendarPlus,
   Wrench,
+  Building2,
 } from "lucide-react";
 import { useEffect, useState, useMemo, type ReactNode } from "react";
 import { BrandLogo } from "@/components/brand-logo";
@@ -28,6 +29,9 @@ import {
 import { cn } from "@/lib/utils";
 import { LABEL_ROLE, NAV_GROUPS, useAuth } from "@/lib/auth";
 import { useStore } from "@/lib/store";
+import { toast } from "sonner";
+import { supabase, isSupabaseConfigured, notifikasiService } from "@/services/appbenk-service";
+import type { NotifikasiRow } from "@/types/database";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -42,13 +46,85 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (!user) return null;
   const groups = NAV_GROUPS[user.role];
   const nav = groups.flatMap((g) => g.items);
-  const { pembayaran, booking } = useStore();
+  const { pembayaran, booking, activeBengkel, bengkel } = useStore();
   const pendingPaymentCount = useMemo(() => {
     return pembayaran.filter((p) => p.status === "Menunggu Verifikasi").length;
   }, [pembayaran]);
   const pendingBookingCount = useMemo(() => {
     return booking.filter((b) => b.status === "Menunggu Konfirmasi").length;
   }, [booking]);
+
+  const isAnzar =
+    (user.email && user.email.toLowerCase().includes("anzar")) ||
+    (user.nama && user.nama.toLowerCase().includes("anzar")) ||
+    user.id === "usr-demo-1";
+
+  const resolvedBengkel = useMemo(() => {
+    // 1. Role admin: Kunci permanen pada bengkel tempat admin ditugaskan/diundang
+    if (user.role === "admin") {
+      const adminBengkelId = user.bengkelId || user.workshopId || (isAnzar ? "bengkel-2307" : "bengkel-001");
+      const found = bengkel.find((b) => b.id === adminBengkelId);
+      if (found) return found;
+      if (adminBengkelId === "bengkel-2307" || isAnzar) {
+        return {
+          id: "bengkel-2307",
+          nama: "Bengkel Fandi Motor",
+          ownerNama: "Fandi Nasir",
+          alamat: "Jl. Selaganggang, Kecamatan mrebet Kabupaten purbalingga.",
+        };
+      }
+    }
+
+    // 2. Role owner: Kunci permanen pada bengkel miliknya berdasarkan identitas session auth & kepemilikan
+    if (user.role === "owner") {
+      const ownerBengkelId = user.bengkelId || user.workshopId;
+      if (ownerBengkelId) {
+        const found = bengkel.find((b) => b.id === ownerBengkelId);
+        if (found) return found;
+      }
+      const isFandi =
+        (user.nama && user.nama.toLowerCase().includes("fandi")) ||
+        (user.email && user.email.toLowerCase().includes("fandi"));
+      if (isFandi || isAnzar) {
+        const fandiB = bengkel.find((b) => b.id === "bengkel-2307");
+        if (fandiB) return fandiB;
+        return {
+          id: "bengkel-2307",
+          nama: "Bengkel Fandi Motor",
+          ownerNama: "Fandi Nasir",
+          alamat: "Jl. Selaganggang, Kecamatan mrebet Kabupaten purbalingga.",
+        };
+      }
+      const foundByEmail = bengkel.find(
+        (b) =>
+          (user.email && b.ownerEmail && b.ownerEmail.toLowerCase() === user.email.toLowerCase()) ||
+          (user.nama && b.ownerNama && b.ownerNama.toLowerCase() === user.nama.toLowerCase()) ||
+          (user.nama && b.ownerNama && user.nama.toLowerCase().includes(b.ownerNama.toLowerCase())),
+      );
+      if (foundByEmail) return foundByEmail;
+    }
+
+    if (isAnzar) {
+      return (
+        bengkel.find((b) => b.id === "bengkel-2307") ||
+        activeBengkel || {
+          id: "bengkel-2307",
+          nama: "Bengkel Fandi Motor",
+          ownerNama: "Fandi Nasir",
+          alamat: "Jl. Selaganggang, Kecamatan mrebet Kabupaten purbalingga.",
+        }
+      );
+    }
+    return (
+      activeBengkel ||
+      bengkel.find((b) => b.id === "bengkel-2307") || {
+        id: "bengkel-2307",
+        nama: "Bengkel Fandi Motor",
+        ownerNama: "Fandi Nasir",
+        alamat: "Jl. Selaganggang, Kecamatan mrebet Kabupaten purbalingga.",
+      }
+    );
+  }, [user, isAnzar, activeBengkel, bengkel]);
 
   return (
     <div className="min-h-screen bg-background lg:flex">
@@ -82,6 +158,34 @@ export function AppShell({ children }: { children: ReactNode }) {
             Role · {LABEL_ROLE[user.role]}
           </span>
         </div>
+
+        {/* WORKSHOP IDENTITY CARD DI SIDEBAR */}
+        {(user.role === "admin" || user.role === "owner") && (
+          <div className="mx-3 mb-3 rounded-lg border border-sidebar-border bg-sidebar-accent/50 p-2.5 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="flex size-7 items-center justify-center rounded-md bg-emerald-500/20 text-emerald-400 font-bold text-xs shrink-0">
+                <Building2 className="size-4" />
+              </span>
+              <div className="min-w-0 flex-1 leading-tight">
+                <p className="truncate font-semibold text-white">
+                  {resolvedBengkel.nama}
+                </p>
+                <p className="truncate text-[10px] text-sidebar-foreground/70">
+                  Owner: {resolvedBengkel.ownerNama}
+                </p>
+              </div>
+            </div>
+            <div className="mt-2 flex items-center justify-between border-t border-sidebar-border/60 pt-1.5 text-[10px] text-sidebar-foreground/60">
+              <span className="flex items-center gap-1 font-medium text-emerald-400">
+                <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                {user.role === "admin" ? "Admin Cabang" : "Pemilik Bengkel"}
+              </span>
+              <span className="truncate max-w-[90px] text-[9px] text-sidebar-foreground/50">
+                {(resolvedBengkel.alamat || "Cabang Aktif").replace(/\[geo:[^\]]+\]/gi, "").trim()}
+              </span>
+            </div>
+          </div>
+        )}
 
         <nav className="flex-1 space-y-4 overflow-y-auto p-3 pt-0">
           {groups.map((group, i) => (
@@ -134,11 +238,40 @@ export function AppShell({ children }: { children: ReactNode }) {
           <button className="lg:hidden" onClick={() => setOpen(true)} aria-label="Buka menu">
             <Menu className="size-5" />
           </button>
-          <p className="truncate font-display text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            {nav.find((n) => n.to === pathname)?.label ?? "AppBenk"}
-          </p>
+          <div className="min-w-0">
+            <p className="truncate font-display text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              {nav.find((n) => n.to === pathname)?.label ?? "AppBenk"}
+            </p>
+            {(user.role === "admin" || user.role === "owner") && (
+              <p className="hidden text-[11px] text-muted-foreground/80 sm:block truncate">
+                Dashboard Bengkel: <strong className="text-foreground font-semibold">{resolvedBengkel.nama}</strong> • Pemilik: {resolvedBengkel.ownerNama}
+              </p>
+            )}
+          </div>
 
           <div className="ml-auto flex items-center gap-2">
+            {/* WORKSHOP IDENTITY BADGE (OWNER & ADMIN) — Status statis permanen terkunci tanpa dropdown / non-clickable */}
+            {(user.role === "admin" || user.role === "owner") && (
+              <div
+                className="flex h-9 items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2.5 text-xs text-foreground cursor-default select-none"
+                title={`${user.role === "owner" ? "Bengkel Milik" : "Bengkel Tugas"}: ${resolvedBengkel.nama} (Owner: ${resolvedBengkel.ownerNama})`}
+              >
+                <span className="relative flex size-2 shrink-0">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+                </span>
+                <Building2 className="size-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <div className="hidden text-left leading-tight md:block">
+                  <p className="font-semibold text-xs text-foreground truncate max-w-[140px]">
+                    {resolvedBengkel.nama}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground truncate max-w-[140px]">
+                    Owner: {resolvedBengkel.ownerNama}
+                  </p>
+                </div>
+              </div>
+            )}
+
             <NotificationBell />
 
             <DropdownMenu>
@@ -187,10 +320,145 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
+function playNotificationChime() {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(587.33, now); // D5
+    osc.frequency.exponentialRampToValueAtTime(880, now + 0.12); // A5
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.25, now + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.45);
+
+    setTimeout(() => {
+      ctx.close().catch(() => {});
+    }, 600);
+  } catch {
+    // Audio autoplay restrictions or unsupported
+  }
+}
+
 function NotificationBell() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const { notifikasi, tandaiNotifikasiDibaca, tandaiSemuaNotifikasiDibaca } = useStore();
+  const {
+    notifikasi,
+    tambahNotifikasiRealtime,
+    tandaiNotifikasiDibaca,
+    tandaiSemuaNotifikasiDibaca,
+  } = useStore();
+
+  // Load notifikasi dari Supabase on mount/login
+  useEffect(() => {
+    if (!user || !isSupabaseConfigured()) return;
+
+    notifikasiService
+      .getForUser({
+        userId: user.id,
+        bengkelId: user.bengkelId,
+        role: user.role,
+      })
+      .then((rows) => {
+        if (!rows || rows.length === 0) return;
+        for (const row of rows) {
+          tambahNotifikasiRealtime({
+            id: row.id,
+            role: user.role,
+            tipe: (row.tipe as any) || "info",
+            judul: row.judul,
+            pesan: row.pesan,
+            waktu: row.created_at || new Date().toISOString(),
+            dibaca: Boolean(row.is_read),
+            link: row.tautan_url || undefined,
+            userId: row.user_id,
+          });
+        }
+      })
+      .catch(() => {});
+  }, [user?.id, user?.bengkelId, user?.role, tambahNotifikasiRealtime]);
+
+  // Supabase Realtime Listener untuk tabel notifikasi
+  useEffect(() => {
+    if (!user || !isSupabaseConfigured()) return;
+
+    const client = supabase();
+    const channelName = `realtime-notif-${user.id}-${Date.now().toString(36)}`;
+
+    const channel = client
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "notifikasi",
+        },
+        (payload: any) => {
+          const row = payload.new as NotifikasiRow;
+          if (!row) return;
+
+          // Periksa apakah notifikasi ditujukan untuk user ini atau bengkel terkait (Admin/Owner)
+          const isForDirectUser = Boolean(user.id && row.user_id === user.id);
+          const isForWorkshop = Boolean(
+            user.bengkelId &&
+            row.bengkel_id === user.bengkelId &&
+            (user.role === "admin" || user.role === "owner")
+          );
+
+          if (isForDirectUser || isForWorkshop) {
+            // 1. Putar suara notifikasi halus
+            playNotificationChime();
+
+            // 2. Munculkan Toast notification instan
+            toast(row.judul, {
+              description: row.pesan,
+              action: row.tautan_url
+                ? {
+                    label: "Buka",
+                    onClick: () => {
+                      if (row.id) tandaiNotifikasiDibaca(row.id);
+                      navigate({ to: row.tautan_url! });
+                    },
+                  }
+                : undefined,
+              duration: 5000,
+            });
+
+            // 3. Masukkan ke state store agar badge counter dan dropdown langsung terupdate
+            tambahNotifikasiRealtime({
+              id: row.id,
+              role: user.role,
+              tipe: (row.tipe as any) || "info",
+              judul: row.judul,
+              pesan: row.pesan,
+              waktu: row.created_at || new Date().toISOString(),
+              dibaca: false,
+              link: row.tautan_url || undefined,
+              userId: row.user_id,
+            });
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      client.removeChannel(channel);
+    };
+  }, [user?.id, user?.bengkelId, user?.role, tambahNotifikasiRealtime, tandaiNotifikasiDibaca, navigate]);
 
   if (!user) return null;
 
@@ -222,7 +490,7 @@ function NotificationBell() {
     tandaiNotifikasiDibaca(id);
     let target = link;
     if (user.role === "super_admin") {
-      if (judul && (judul.toLowerCase().includes("tiket") || judul.toLowerCase().includes("cs") || judul.toLowerCase().includes("customer service"))) {
+      if (judul && (judul.toLowerCase().includes("tiket") || judul.toLowerCase().includes("cs") || judul.toLowerCase().includes("customer service") || judul.toLowerCase().includes("developer support"))) {
         target = "/superadmin/cs";
       } else if (judul && (judul.toLowerCase().includes("error") || judul.toLowerCase().includes("log"))) {
         target = "/superadmin/error-log";
@@ -230,16 +498,26 @@ function NotificationBell() {
         target = "/superadmin/klien";
       }
     } else if (user.role === "admin" || user.role === "owner") {
-      if (judul && (judul.toLowerCase().includes("pembayaran") || judul.toLowerCase().includes("qris") || judul.toLowerCase().includes("transfer") || judul.toLowerCase().includes("cash"))) {
-        target = "/admin/pembayaran?filter=menunggu_verifikasi";
-      } else if (judul && (judul.toLowerCase().includes("booking") || judul.toLowerCase().includes("servis masuk"))) {
-        target = "/admin/booking";
-      } else if (judul && (judul.toLowerCase().includes("stok") || judul.toLowerCase().includes("sparepart"))) {
-        target = "/admin/stok";
+      if (!target) {
+        if (judul && (judul.toLowerCase().includes("pembayaran") || judul.toLowerCase().includes("qris") || judul.toLowerCase().includes("transfer") || judul.toLowerCase().includes("cash"))) {
+          target = "/admin/pembayaran?filter=menunggu_verifikasi";
+        } else if (judul && (judul.toLowerCase().includes("booking") || judul.toLowerCase().includes("servis masuk"))) {
+          target = "/admin/booking";
+        } else if (judul && (judul.toLowerCase().includes("stok") || judul.toLowerCase().includes("sparepart"))) {
+          target = "/admin/stok";
+        }
       }
     } else {
-      if (statusBooking === "Diterima" || (judul && judul.toLowerCase().includes("booking diterima"))) {
-        target = "/pelanggan/status";
+      if (!target) {
+        if (statusBooking === "Diterima" || (judul && (judul.toLowerCase().includes("booking diterima") || judul.toLowerCase().includes("booking disetujui")))) {
+          target = "/pelanggan/status";
+        } else if (statusBooking === "Ditolak" || (judul && judul.toLowerCase().includes("booking ditolak"))) {
+          target = "/pelanggan/booking";
+        } else if (judul && (judul.toLowerCase().includes("estimasi") || judul.toLowerCase().includes("servis"))) {
+          target = "/pelanggan/status";
+        } else if (judul && judul.toLowerCase().includes("pembayaran")) {
+          target = "/pelanggan/pembayaran";
+        }
       }
     }
     if (target) {
@@ -304,7 +582,7 @@ function NotificationBell() {
               onClick={() => tandaiSemuaNotifikasiDibaca(user.role === "owner" || user.role === "super_admin" ? undefined : user.role)}
               className="flex items-center gap-1 text-[11px] font-medium text-primary hover:underline cursor-pointer"
             >
-              <CheckCheck className="size-3" /> Tandai dibaca
+              <CheckCheck className="size-3" /> Tandai Semua Sudah Dibaca
             </button>
           )}
         </div>
@@ -315,7 +593,7 @@ function NotificationBell() {
               <Bell className="mx-auto size-7 text-muted-foreground/40 mb-2" />
               <p className="font-medium">Belum ada notifikasi baru</p>
               <p className="text-[11px] text-muted-foreground/70">
-                Notifikasi pembayaran dan aktivitas akan muncul di sini.
+                Notifikasi aktivitas dan transaksi akan muncul di sini secara realtime.
               </p>
             </div>
           ) : (

@@ -34,6 +34,12 @@ import type {
   CSMessageRow,
   PaketBengkel,
   StatusKlien,
+  WorkshopApplicationRow,
+  StatusWorkshopApplication,
+  AdminInvitationRow,
+  StatusAdminInvitation,
+  TipeNotifikasi,
+  NotifikasiRow,
 } from "@/types/database";
 
 /**
@@ -349,6 +355,19 @@ export const bookingService = {
       .select()
       .single();
     if (error) throw error;
+
+    if (data) {
+      try {
+        await notifikasiService.notifyWorkshopStaff({
+          bengkelId: idBengkel,
+          judul: "Booking Baru Masuk",
+          pesan: `Booking baru masuk untuk layanan ${payload.jenis_servis}.`,
+          tipe: "booking",
+          tautanUrl: "/admin/booking",
+        });
+      } catch {}
+    }
+
     return data;
   },
 
@@ -372,6 +391,25 @@ export const bookingService = {
       .select()
       .single();
     if (error) throw error;
+
+    if (data && (status === "disetujui" || status === "ditolak")) {
+      try {
+        const disetujui = status === "disetujui";
+        const judul = disetujui ? "Booking Disetujui" : "Booking Ditolak";
+        const pesan = disetujui
+          ? "Booking Anda telah Disetujui oleh bengkel."
+          : `Booking Anda telah Ditolak oleh bengkel.${alasanPenolakan?.trim() ? ` Alasan: ${alasanPenolakan.trim()}` : ""}`;
+        await notifikasiService.notifyCustomer({
+          customerId: data.id_pelanggan,
+          bengkelId: data.id_bengkel || (data as any).workshop_id,
+          judul,
+          pesan,
+          tipe: "booking",
+          tautanUrl: disetujui ? "/pelanggan/status" : "/pelanggan/booking",
+        });
+      } catch {}
+    }
+
     return data;
   },
 };
@@ -513,7 +551,23 @@ export const servisService = {
   },
 
   async updateStatus(idServis: string, status: StatusServis): Promise<ServisRow> {
-    return this.update(idServis, { status_servis: status });
+    const updated = await this.update(idServis, { status_servis: status });
+    if (status === "diproses" || status === "selesai") {
+      try {
+        const isDiproses = status === "diproses";
+        const judul = isDiproses ? "Servis Sedang Diproses" : "Servis Selesai";
+        const pesan = `Status kendaraan Anda sekarang: ${isDiproses ? "Diproses" : "Siap Diambil"}.`;
+        await notifikasiService.notifyCustomer({
+          customerId: updated.id_pelanggan,
+          bengkelId: updated.id_bengkel || updated.workshop_id,
+          judul,
+          pesan,
+          tipe: "servis",
+          tautanUrl: "/pelanggan/status",
+        });
+      } catch {}
+    }
+    return updated;
   },
 
   async delete(idServis: string): Promise<void> {
@@ -599,18 +653,67 @@ export const sparepartService = {
     return data ?? [];
   },
 
-  async create(payload: SparepartRow): Promise<SparepartRow> {
-    if (!isSupabaseConfigured()) return payload;
-    const { data, error } = await supabase().from("sparepart").insert(payload).select().single();
+  async create(payload: Partial<SparepartRow> & { id_sparepart: string; nama_sparepart: string }): Promise<SparepartRow> {
+    if (!isSupabaseConfigured()) return payload as SparepartRow;
+    const now = new Date().toISOString();
+    const stokTersedia = Number(payload.stok_tersedia ?? payload.stok ?? 0);
+    const stokMin = Number(payload.stok_minimum ?? 5);
+    const insertPayload: any = {
+      ...payload,
+      kode: payload.kode || payload.id_sparepart.toUpperCase(),
+      nama: payload.nama || payload.nama_sparepart,
+      nama_sparepart: payload.nama_sparepart,
+      kategori: payload.kategori || "Umum",
+      satuan: payload.satuan || "Pcs",
+      harga: Number(payload.harga || 0),
+      stok: stokTersedia,
+      stok_tersedia: stokTersedia,
+      stok_minimum: stokMin,
+      status_stok:
+        payload.status_stok ||
+        (stokTersedia <= 0 ? "habis" : stokTersedia <= stokMin ? "menipis" : "tersedia"),
+      tanggal_update: payload.tanggal_update || now,
+      created_at: payload.created_at || now,
+      updated_at: payload.updated_at || now,
+    };
+    const { data, error } = await supabase().from("sparepart").insert(insertPayload).select().single();
     if (error) throw error;
     return data;
   },
 
   async update(idSparepart: string, payload: Partial<SparepartRow>): Promise<SparepartRow> {
     if (!isSupabaseConfigured()) throw new Error("Supabase tidak aktif");
+    const now = new Date().toISOString();
+    const updatePayload: any = {
+      ...payload,
+      updated_at: now,
+      tanggal_update: now,
+    };
+
+    if (payload.nama !== undefined && payload.nama_sparepart === undefined) {
+      updatePayload.nama_sparepart = payload.nama;
+    }
+    if (payload.nama_sparepart !== undefined && payload.nama === undefined) {
+      updatePayload.nama = payload.nama_sparepart;
+    }
+    if (payload.stok !== undefined && payload.stok_tersedia === undefined) {
+      updatePayload.stok_tersedia = Number(payload.stok);
+    }
+    if (payload.stok_tersedia !== undefined && payload.stok === undefined) {
+      updatePayload.stok = Number(payload.stok_tersedia);
+    }
+    if (payload.harga !== undefined) {
+      updatePayload.harga = Number(payload.harga);
+    }
+    if (updatePayload.stok !== undefined) {
+      const stokMin = Number(payload.stok_minimum ?? 5);
+      updatePayload.status_stok =
+        updatePayload.stok <= 0 ? "habis" : updatePayload.stok <= stokMin ? "menipis" : "tersedia";
+    }
+
     const { data, error } = await supabase()
       .from("sparepart")
-      .update(payload)
+      .update(updatePayload)
       .eq("id_sparepart", idSparepart)
       .select()
       .single();
@@ -618,14 +721,107 @@ export const sparepartService = {
     return data;
   },
 
-  async delete(idSparepart: string): Promise<void> {
-    if (!isSupabaseConfigured()) return;
-    const { error } = await supabase().from("sparepart").delete().eq("id_sparepart", idSparepart);
-    if (error) throw error;
+  // Stock Adjustment (Tambah / Kurang / Set Stok Fisik) dengan pencatatan audit log ke riwayat_stok
+  async adjustStok(params: {
+    idSparepart: string;
+    newStok: number;
+    keterangan?: string;
+    tipeAksi?: "masuk" | "keluar" | "penyesuaian";
+  }): Promise<{ sparepart: SparepartRow; diff: number }> {
+    if (!isSupabaseConfigured()) throw new Error("Supabase tidak aktif");
+    const parsedStok = Math.max(0, Math.round(Number(params.newStok)));
+    if (!Number.isFinite(parsedStok)) throw new Error("Jumlah stok harus berupa angka valid");
+
+    // 1. Ambil data sparepart saat ini untuk menghitung selisih
+    const { data: currentPart, error: fetchErr } = await supabase()
+      .from("sparepart")
+      .select("*")
+      .eq("id_sparepart", params.idSparepart)
+      .single();
+    if (fetchErr) throw fetchErr;
+
+    const currentStok = Number(currentPart.stok_tersedia ?? currentPart.stok ?? 0);
+    const diff = parsedStok - currentStok;
+    const now = new Date().toISOString();
+    const tgl = now.slice(0, 10);
+    const stokMin = Number(currentPart.stok_minimum ?? 5);
+
+    // 2. Update stok pada tabel master sparepart
+    const { data: updatedPart, error: updateErr } = await supabase()
+      .from("sparepart")
+      .update({
+        stok: parsedStok,
+        stok_tersedia: parsedStok,
+        status_stok: parsedStok <= 0 ? "habis" : parsedStok <= stokMin ? "menipis" : "tersedia",
+        tanggal_update: now,
+        updated_at: now,
+      })
+      .eq("id_sparepart", params.idSparepart)
+      .select()
+      .single();
+    if (updateErr) throw updateErr;
+
+    // 3. Catat audit entry ke tabel riwayat_stok jika ada perubahan
+    if (diff !== 0) {
+      const idRiw = `rw-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const jenisLog = params.tipeAksi || (diff > 0 ? "masuk" : "keluar");
+      const defaultKet =
+        diff > 0
+          ? `Penyesuaian stok masuk (+${diff}) · Total: ${parsedStok}`
+          : `Penyesuaian stok keluar (${diff}) · Total: ${parsedStok}`;
+
+      try {
+        await supabase().from("riwayat_stok").insert({
+          id_riwayat_stok: idRiw,
+          id_riwayat: idRiw,
+          id_sparepart: params.idSparepart,
+          tipe: diff > 0 ? "masuk" : "keluar",
+          jenis: jenisLog,
+          qty: Math.abs(diff),
+          jumlah: Math.abs(diff),
+          tanggal: tgl,
+          keterangan: params.keterangan?.trim() || defaultKet,
+        });
+      } catch (logErr) {
+        console.warn("Gagal mencatat audit log riwayat_stok:", logErr);
+      }
+    }
+
+    return { sparepart: updatedPart, diff };
   },
 
-  // Penggunaan sparepart (otomatis mengurangi stok via trigger)
+  async delete(idSparepart: string): Promise<{ success: boolean; softDeleted?: boolean; message?: string }> {
+    if (!isSupabaseConfigured()) return { success: true };
+    const { error } = await supabase().from("sparepart").delete().eq("id_sparepart", idSparepart);
+    if (error) {
+      // Error code 23503: foreign_key_violation
+      if (error.code === "23503" || error.message?.toLowerCase().includes("foreign key")) {
+        // Implementasi soft-delete: tandai status_stok menjadi habis
+        try {
+          await supabase()
+            .from("sparepart")
+            .update({
+              status_stok: "habis",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id_sparepart", idSparepart);
+        } catch {}
+
+        return {
+          success: false,
+          softDeleted: true,
+          message:
+            "Sparepart tidak dapat dihapus permanen karena masih tercatat dalam riwayat servis/pembelian. Status stok telah dinonaktifkan.",
+        };
+      }
+      throw error;
+    }
+    return { success: true };
+  },
+
+  // Penggunaan sparepart (mengurangi stok dan mencatat log riwayat mutasi keluar)
   async catatPenggunaan(payload: {
+    id_penggunaan_sparepart?: string;
     id_sparepart: string;
     id_servis: string;
     jumlah: number;
@@ -633,32 +829,99 @@ export const sparepartService = {
     id_bengkel?: string;
     mekanik?: string;
     keterangan?: string;
+    tanggal?: string;
+    total_harga?: number;
   }): Promise<PenggunaanSparepartRow> {
+    const idPembelianOrPenggunaan = payload.id_penggunaan_sparepart || crypto.randomUUID();
+    const wbId = payload.workshop_id ?? payload.id_bengkel ?? "bengkel-001";
+    const tgl = payload.tanggal ?? new Date().toISOString().slice(0, 10);
+    const rowPayload: PenggunaanSparepartRow = {
+      id_penggunaan_sparepart: idPembelianOrPenggunaan,
+      id_sparepart: payload.id_sparepart,
+      id_servis: payload.id_servis,
+      workshop_id: wbId,
+      id_bengkel: wbId,
+      tanggal: tgl,
+      jumlah: payload.jumlah,
+      qty: payload.jumlah,
+      total_harga: payload.total_harga ?? 0,
+      mekanik: payload.mekanik ?? null,
+      keterangan: payload.keterangan ?? null,
+      created_at: new Date().toISOString(),
+    };
+
     if (!isSupabaseConfigured()) {
-      return {
-        id_penggunaan_sparepart: crypto.randomUUID(),
-        id_sparepart: payload.id_sparepart,
-        id_servis: payload.id_servis,
-        workshop_id: payload.workshop_id ?? payload.id_bengkel ?? "bengkel-001",
-        id_bengkel: payload.id_bengkel ?? payload.workshop_id ?? "bengkel-001",
-        tanggal: new Date().toISOString().slice(0, 10),
-        jumlah: payload.jumlah,
-        mekanik: payload.mekanik ?? null,
-        keterangan: payload.keterangan ?? null,
-        created_at: new Date().toISOString(),
-      };
+      return rowPayload;
     }
+
     const { data, error } = await supabase()
       .from("penggunaan_sparepart")
-      .insert(payload)
+      .insert({
+        id_penggunaan_sparepart: idPembelianOrPenggunaan,
+        id_sparepart: payload.id_sparepart,
+        id_servis: payload.id_servis,
+        tanggal: tgl,
+        jumlah: payload.jumlah,
+        qty: payload.jumlah,
+        total_harga: payload.total_harga ?? 0,
+        mekanik: payload.mekanik ?? null,
+        keterangan: payload.keterangan ?? null,
+      })
       .select()
       .single();
     if (error) throw error;
+
+    // 1. Kurangi stok di master sparepart
+    try {
+      const { data: sp } = await supabase()
+        .from("sparepart")
+        .select("stok, stok_tersedia")
+        .eq("id_sparepart", payload.id_sparepart)
+        .maybeSingle();
+
+      if (sp) {
+        const newStok = Math.max(0, (sp.stok ?? 0) - payload.jumlah);
+        const newTersedia = Math.max(0, (sp.stok_tersedia ?? 0) - payload.jumlah);
+        await supabase()
+          .from("sparepart")
+          .update({
+            stok: newStok,
+            stok_tersedia: newTersedia,
+            status_stok: newStok <= 0 ? "habis" : newStok <= 5 ? "menipis" : "tersedia",
+            tanggal_update: new Date().toISOString(),
+          })
+          .eq("id_sparepart", payload.id_sparepart);
+      }
+    } catch (e) {
+      console.error("Gagal update stok penggunaan sparepart:", e);
+    }
+
+    // 2. Catat ke riwayat mutasi stok (Keluar)
+    try {
+      const idRiw = `rw-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      await supabase()
+        .from("riwayat_stok")
+        .insert({
+          id_riwayat_stok: idRiw,
+          id_riwayat: idRiw,
+          id_sparepart: payload.id_sparepart,
+          tipe: "keluar",
+          jenis: "keluar",
+          qty: payload.jumlah,
+          jumlah: payload.jumlah,
+          tanggal: tgl,
+          keterangan: payload.keterangan || "Penggunaan operasional servis",
+        });
+    } catch (e) {
+      console.error("Gagal catat riwayat stok keluar pemakaian:", e);
+    }
+
     return data;
   },
 
-  // Pembelian sparepart (otomatis menambah stok via trigger saat status 'diterima')
+  // Pembelian sparepart (otomatis menambah stok master sparepart & log riwayat mutasi masuk)
   async catatPembelian(payload: {
+    id_pembelian_sparepart?: string;
     nomor_pembelian: string;
     id_sparepart: string;
     supplier: string;
@@ -667,41 +930,81 @@ export const sparepartService = {
     total: number;
     workshop_id?: string;
     id_bengkel?: string;
+    id_supplier?: string | null;
     tanggal?: string;
     status?: "diterima" | "dibatalkan" | "retur";
   }): Promise<PembelianSparepartRow> {
+    const idPembelian = payload.id_pembelian_sparepart || crypto.randomUUID();
+    const wbId = payload.workshop_id ?? payload.id_bengkel ?? "bengkel-001";
+    const tgl = payload.tanggal ?? new Date().toISOString().slice(0, 10);
+    const rowPayload: PembelianSparepartRow = {
+      id_pembelian_sparepart: idPembelian,
+      id_pembelian: idPembelian,
+      nomor_pembelian: payload.nomor_pembelian,
+      id_sparepart: payload.id_sparepart,
+      id_supplier: payload.id_supplier ?? null,
+      supplier: payload.supplier,
+      workshop_id: wbId,
+      id_bengkel: wbId,
+      tanggal: tgl,
+      jumlah: payload.jumlah,
+      harga: payload.harga,
+      total: payload.total,
+      status: payload.status ?? "diterima",
+      created_at: new Date().toISOString(),
+    };
+
     if (!isSupabaseConfigured()) {
-      return {
-        id_pembelian_sparepart: crypto.randomUUID(),
+      return rowPayload;
+    }
+
+    const { data, error } = await supabase()
+      .from("pembelian_sparepart")
+      .insert({
+        id_pembelian_sparepart: idPembelian,
+        id_pembelian: idPembelian,
         nomor_pembelian: payload.nomor_pembelian,
         id_sparepart: payload.id_sparepart,
+        id_supplier: payload.id_supplier ?? null,
         supplier: payload.supplier,
-        workshop_id: payload.workshop_id ?? payload.id_bengkel ?? "bengkel-001",
-        id_bengkel: payload.id_bengkel ?? payload.workshop_id ?? "bengkel-001",
-        tanggal: payload.tanggal ?? new Date().toISOString().slice(0, 10),
+        id_bengkel: wbId,
+        tanggal: tgl,
         jumlah: payload.jumlah,
         harga: payload.harga,
         total: payload.total,
         status: payload.status ?? "diterima",
-        created_at: new Date().toISOString(),
-      };
-    }
-    const { data, error } = await supabase()
-      .from("pembelian_sparepart")
-      .insert(payload)
+      })
       .select()
       .single();
     if (error) throw error;
+
+    // Catat log riwayat mutasi stok (Masuk)
+    try {
+      const idRiw = `rw-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      await supabase()
+        .from("riwayat_stok")
+        .insert({
+          id_riwayat_stok: idRiw,
+          id_riwayat: idRiw,
+          id_sparepart: payload.id_sparepart,
+          tipe: "masuk",
+          jenis: "masuk",
+          qty: payload.jumlah,
+          jumlah: payload.jumlah,
+          tanggal: tgl,
+          keterangan: `Pembelian ${payload.nomor_pembelian} · ${payload.supplier}`,
+        });
+    } catch (e) {
+      console.error("Gagal catat riwayat stok masuk pembelian:", e);
+    }
+
     return data;
   },
 
-  async getRiwayatStok(idSparepart?: string, workshopId?: string): Promise<RiwayatStokRow[]> {
+  async getRiwayatStok(idSparepart?: string): Promise<RiwayatStokRow[]> {
     if (!isSupabaseConfigured()) return [];
     let query = supabase().from("riwayat_stok").select("*").order("tanggal", { ascending: false });
     if (idSparepart) query = query.eq("id_sparepart", idSparepart);
-    if (workshopId) {
-      query = query.or(`workshop_id.eq.${workshopId},id_bengkel.eq.${workshopId}`);
-    }
     const { data, error } = await query;
     if (error) throw error;
     return data ?? [];
@@ -714,7 +1017,7 @@ export const sparepartService = {
       .select("*")
       .order("tanggal", { ascending: false });
     if (workshopId) {
-      query = query.or(`workshop_id.eq.${workshopId},id_bengkel.eq.${workshopId}`);
+      query = query.eq("id_bengkel", workshopId);
     }
     const { data, error } = await query;
     if (error) throw error;
@@ -726,6 +1029,14 @@ export const sparepartService = {
     payload: Partial<PembelianSparepartRow>,
   ): Promise<PembelianSparepartRow> {
     if (!isSupabaseConfigured()) throw new Error("Supabase tidak aktif");
+
+    // Ambil data lama sebelum diupdate untuk penyesuaian selisih stok
+    const { data: oldData } = await supabase()
+      .from("pembelian_sparepart")
+      .select("*")
+      .eq("id_pembelian_sparepart", idPembelian)
+      .maybeSingle();
+
     const { data, error } = await supabase()
       .from("pembelian_sparepart")
       .update(payload)
@@ -733,11 +1044,45 @@ export const sparepartService = {
       .select()
       .single();
     if (error) throw error;
+
+    // Perbarui catatan di riwayat_stok jika ada perubahan
+    if (oldData && (payload.jumlah !== undefined || payload.id_sparepart !== undefined || payload.tanggal || payload.supplier)) {
+      const newPartId = payload.id_sparepart || oldData.id_sparepart;
+      const newJumlah = payload.jumlah !== undefined ? Number(payload.jumlah) : Number(oldData.jumlah || 0);
+      if (oldData.nomor_pembelian) {
+        await supabase()
+          .from("riwayat_stok")
+          .update({
+            id_sparepart: newPartId,
+            jumlah: newJumlah,
+            qty: newJumlah,
+            ...(payload.tanggal ? { tanggal: payload.tanggal } : {}),
+            keterangan: `Pembelian ${oldData.nomor_pembelian} · ${payload.supplier || oldData.supplier}`,
+          })
+          .ilike("keterangan", `%${oldData.nomor_pembelian}%`);
+      }
+    }
+
     return data;
   },
 
   async deletePembelian(idPembelian: string): Promise<void> {
     if (!isSupabaseConfigured()) return;
+
+    const { data: oldData } = await supabase()
+      .from("pembelian_sparepart")
+      .select("*")
+      .eq("id_pembelian_sparepart", idPembelian)
+      .maybeSingle();
+
+    if (oldData && oldData.nomor_pembelian) {
+      // Bersihkan riwayat mutasi stok terkait nomor pembelian ini
+      await supabase()
+        .from("riwayat_stok")
+        .delete()
+        .ilike("keterangan", `%${oldData.nomor_pembelian}%`);
+    }
+
     const { error } = await supabase()
       .from("pembelian_sparepart")
       .delete()
@@ -871,10 +1216,77 @@ export const sparepartService = {
     riwayatStokId?: string | null,
   ): Promise<ReturSparepartRow> {
     if (!isSupabaseConfigured()) throw new Error("Supabase tidak aktif");
+
+    // Ambil data retur saat ini
+    const { data: currentRetur } = await supabase()
+      .from("retur_sparepart")
+      .select("*")
+      .eq("id_retur_sparepart", idRetur)
+      .maybeSingle();
+
+    const isApprovalState =
+      status === "Disetujui" || status === "Selesai" || status === "Barang Dikirim";
+    const needsStockDeduction =
+      isApprovalState &&
+      (!currentRetur?.stok_dikurangi || stokDikurangi === true);
+
+    let finalRiwayatId = riwayatStokId ?? currentRetur?.riwayat_stok_id ?? null;
+
+    if (needsStockDeduction && currentRetur && !currentRetur.stok_dikurangi) {
+      const partId = currentRetur.id_sparepart;
+      const qtyRetur = Number(currentRetur.jumlah || 1);
+      finalRiwayatId = finalRiwayatId || `rw-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+      // 1. Kurangi stok fisik sparepart
+      try {
+        const { data: sp } = await supabase()
+          .from("sparepart")
+          .select("stok, stok_tersedia")
+          .eq("id_sparepart", partId)
+          .maybeSingle();
+
+        if (sp) {
+          const newStok = Math.max(0, (sp.stok ?? 0) - qtyRetur);
+          const newTersedia = Math.max(0, (sp.stok_tersedia ?? 0) - qtyRetur);
+          await supabase()
+            .from("sparepart")
+            .update({
+              stok: newStok,
+              stok_tersedia: newTersedia,
+              status_stok: newStok <= 0 ? "habis" : newStok <= 5 ? "menipis" : "tersedia",
+              tanggal_update: new Date().toISOString(),
+            })
+            .eq("id_sparepart", partId);
+        }
+      } catch (e) {
+        console.error("Gagal mengurangi stok master saat retur disetujui:", e);
+      }
+
+      // 2. Catat log mutasi pengembalian barang (Keluar)
+      try {
+        await supabase()
+          .from("riwayat_stok")
+          .insert({
+            id_riwayat_stok: finalRiwayatId,
+            id_riwayat: finalRiwayatId,
+            id_sparepart: partId,
+            tipe: "keluar",
+            jenis: "keluar",
+            qty: qtyRetur,
+            jumlah: qtyRetur,
+            tanggal: currentRetur.tanggal || new Date().toISOString().slice(0, 10),
+            keterangan: `Retur ${currentRetur.nomor_retur || idRetur} (${currentRetur.supplier || "Supplier"}) · ${currentRetur.alasan}`,
+          });
+      } catch (e) {
+        console.error("Gagal mencatat mutasi stok keluar retur:", e);
+      }
+    }
+
     const updatePayload: Partial<ReturSparepartRow> = { status };
     if (alasanPenolakan !== undefined) updatePayload.alasan_penolakan = alasanPenolakan;
-    if (stokDikurangi !== undefined) updatePayload.stok_dikurangi = stokDikurangi;
-    if (riwayatStokId !== undefined) updatePayload.riwayat_stok_id = riwayatStokId;
+    if (needsStockDeduction) updatePayload.stok_dikurangi = true;
+    else if (stokDikurangi !== undefined) updatePayload.stok_dikurangi = stokDikurangi;
+    if (finalRiwayatId) updatePayload.riwayat_stok_id = finalRiwayatId;
 
     const { data, error } = await supabase()
       .from("retur_sparepart")
@@ -1029,17 +1441,17 @@ export function getLocalAccounts(workshopId?: string): WorkshopPaymentAccountRow
       }
     } catch {}
 
-    // Sinkronkan QRIS spesifik dari appbenk_qris_active dan appbenk_qris_image_data jika ada
+    // Sinkronkan QRIS spesifik dari appbenk_qris_active_${workshopId} dan appbenk_qris_image_data_${workshopId} jika ada
     try {
       const wsRaw = workshopId ? localStorage.getItem(`appbenk_qris_active_${workshopId}`) : null;
       const wsImg = workshopId ? localStorage.getItem(`appbenk_qris_image_data_${workshopId}`) : null;
-      const directQrisRaw = wsRaw || localStorage.getItem("appbenk_qris_active");
-      const fallbackImage = wsImg || localStorage.getItem("appbenk_qris_image_data");
+      const directQrisRaw = wsRaw || (workshopId ? null : localStorage.getItem("appbenk_qris_active"));
+      const fallbackImage = wsImg || (workshopId ? null : localStorage.getItem("appbenk_qris_image_data"));
       let qrisObj = directQrisRaw ? JSON.parse(directQrisRaw) : null;
 
       if (!qrisObj && fallbackImage) {
         qrisObj = {
-          id: "acc-qris-001",
+          id: `acc-qris-${wbId}`,
           workshop_id: wbId,
           id_bengkel: wbId,
           account_type: "qris",
@@ -1086,10 +1498,9 @@ export function getLocalAccounts(workshopId?: string): WorkshopPaymentAccountRow
   }
 
   if (workshopId) {
-    const filtered = currentList.filter(
+    return currentList.filter(
       (a) => a.workshop_id === workshopId || a.id_bengkel === workshopId,
     );
-    if (filtered.length > 0) return filtered;
   }
   return currentList;
 }
@@ -1204,20 +1615,35 @@ export const workshopPaymentAccountsService = {
         } catch {}
         return data as WorkshopPaymentAccountRow[];
       }
-      // Supabase kosong untuk workshopId ini — coba ambil SEMUA akun (cross-workshop fallback)
+      // Supabase kosong untuk workshopId ini — STRICT: jangan pernah ambil akun workshop lain!
+      // Coba periksa apakah server backend memiliki file QRIS untuk bengkel ini
       if (workshopId) {
-        const { data: allData, error: allErr } = await supabase()
-          .from("workshop_payment_accounts")
-          .select("*")
-          .order("updated_at", { ascending: false });
-        if (!allErr && allData && allData.length > 0) {
-          try {
-            localStorage.setItem(LOCAL_ACCOUNTS_KEY, JSON.stringify(allData));
-          } catch {}
-          return allData as WorkshopPaymentAccountRow[];
-        }
+        try {
+          const srvRes = await fetch(`/api/workshop/qris?id_bengkel=${encodeURIComponent(workshopId)}`);
+          if (srvRes.ok) {
+            const srvData = await srvRes.json();
+            if (srvData?.ok && srvData?.qris_url) {
+              const serverQris: WorkshopPaymentAccountRow = {
+                id: `qris-${workshopId}`,
+                workshop_id: workshopId,
+                id_bengkel: workshopId,
+                account_type: "qris",
+                provider: "MANUAL",
+                provider_account_id: "qris-manual",
+                qr_image_url: srvData.qris_url,
+                display_name: "QRIS Bengkel",
+                is_active: srvData.is_active ?? true,
+                status: "active",
+                created_at: srvData.updated_at || new Date().toISOString(),
+                updated_at: srvData.updated_at || new Date().toISOString(),
+              };
+              saveLocalAccount(serverQris);
+              return [serverQris];
+            }
+          }
+        } catch {}
       }
-      // Fallback ke localStorage (gabungkan dengan data lokal yang ada)
+      // Fallback ke localStorage terisolasi workshopId
       return getLocalAccounts(workshopId);
     } catch {
       return getLocalAccounts(workshopId);
@@ -1315,6 +1741,18 @@ export const workshopPaymentAccountsService = {
             }
           }
         }
+
+        if (account.account_type === "qris" && item.qr_image_url) {
+          try {
+            await supabase()
+              .from("bengkel")
+              .update({
+                qris_image_url: item.qr_image_url,
+                updated_at: now,
+              } as any)
+              .eq("id_bengkel", wbId);
+          } catch {}
+        }
       } catch (err: any) {
         console.warn("Supabase saveAccount fallback to local:", err.message);
       }
@@ -1350,6 +1788,34 @@ export const storagePaymentService = {
   async uploadQRIS(workshopId: string, file: File): Promise<string> {
     const wbId = workshopId || "bengkel-001";
     const ext = file.name.split(".").pop() || "png";
+
+    // 1. Coba upload via endpoint backend /api/upload/qris (paling stabil & terisolasi per-workshop)
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("workshop_id", wbId);
+      formData.append("id_bengkel", wbId);
+
+      const res = await fetch("/api/upload/qris", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.ok && json?.url) {
+          if (typeof window !== "undefined") {
+            try {
+              localStorage.setItem(`appbenk_qris_image_data_${wbId}`, json.url);
+            } catch {}
+          }
+          return json.url;
+        }
+      }
+    } catch (err) {
+      console.warn("Upload via /api/upload/qris failed, trying bucket/canvas fallback:", err);
+    }
+
     const path = `${wbId}/qris/${Date.now()}-${safeUUID().slice(0, 6)}.${ext}`;
 
     if (isSupabaseConfigured() && isStorageBucketAvailable) {
@@ -1414,6 +1880,16 @@ export const storagePaymentService = {
             ctx.fillRect(0, 0, w, h);
             ctx.drawImage(img, 0, 0, w, h);
             const optimized = canvas.toDataURL("image/jpeg", 0.85);
+
+            // Sync ke server backend juga secara async
+            try {
+              fetch("/api/upload/qris", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ workshop_id: wbId, id_bengkel: wbId, image: optimized }),
+              }).catch(() => {});
+            } catch {}
+
             resolve(optimized);
           } else {
             resolve(dataUrl);
@@ -1427,10 +1903,36 @@ export const storagePaymentService = {
     });
   },
 
-  async uploadBuktiPembayaran(workshopId: string, nomorTransaksi: string, file: File): Promise<string> {
+  async uploadBuktiPembayaran(workshopId: string, nomorTransaksi: string, file: File | Blob, customFileName?: string): Promise<string> {
     const wbId = workshopId || "bengkel-001";
-    const safeTrx = nomorTransaksi.replace(/[^a-zA-Z0-9_-]/g, "_");
-    const ext = file.name.split(".").pop() || "jpg";
+    const safeTrx = (nomorTransaksi || "TRX").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const origName = (file as any)?.name || customFileName || "bukti.jpg";
+    const ext = origName.split(".").pop() || "jpg";
+
+    // 1. Coba upload via endpoint backend /api/upload/bukti jika tersedia di environment browser
+    if (typeof window !== "undefined") {
+      try {
+        const formData = new FormData();
+        formData.append("file", file, origName);
+        formData.append("workshop_id", wbId);
+        formData.append("id_bengkel", wbId);
+        formData.append("no_transaksi", safeTrx);
+
+        const res = await fetch("/api/upload/bukti", {
+          method: "POST",
+          body: formData,
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.url) {
+            return json.url;
+          }
+        }
+      } catch (err) {
+        console.warn("Upload via /api/upload/bukti failed, trying storage bucket/data URL:", err);
+      }
+    }
+
     const path = `${wbId}/payments/${safeTrx}/${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`;
 
     if (isSupabaseConfigured()) {
@@ -1438,7 +1940,7 @@ export const storagePaymentService = {
         const { data, error } = await supabase()
           .storage
           .from("payment-assets")
-          .upload(path, file, { upsert: true, contentType: file.type });
+          .upload(path, file, { upsert: true, contentType: file.type || "image/jpeg" });
 
         if (!error && data?.path) {
           const { data: urlData } = supabase()
@@ -1524,20 +2026,296 @@ export const notificationLogService = {
   },
 };
 
+function getLocalNotifikasiList(): NotifikasiRow[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem("appbenk.data.notifikasi_db");
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalNotifikasiList(list: NotifikasiRow[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem("appbenk.data.notifikasi_db", JSON.stringify(list.slice(0, 100)));
+  } catch {}
+}
+
+export const notifikasiService = {
+  async getForUser(params: {
+    userId?: string;
+    bengkelId?: string;
+    role?: string;
+  }): Promise<NotifikasiRow[]> {
+    if (!isSupabaseConfigured()) {
+      return this.getLocalFiltered(params);
+    }
+    try {
+      let query = supabase()
+        .from("notifikasi")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      if (params.userId) {
+        if (params.bengkelId && (params.role === "admin" || params.role === "owner")) {
+          query = query.or(`user_id.eq.${params.userId},bengkel_id.eq.${params.bengkelId},user_id.is.null`);
+        } else {
+          query = query.eq("user_id", params.userId);
+        }
+      } else if (params.bengkelId) {
+        query = query.eq("bengkel_id", params.bengkelId);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        console.warn("Gagal fetch notifikasi dari Supabase, fallback lokal:", error.message);
+        return this.getLocalFiltered(params);
+      }
+      return (data as NotifikasiRow[]) ?? [];
+    } catch (err) {
+      console.warn("Exception getForUser notifikasi:", err);
+      return this.getLocalFiltered(params);
+    }
+  },
+
+  getLocalFiltered(params: { userId?: string; bengkelId?: string; role?: string }): NotifikasiRow[] {
+    const list = getLocalNotifikasiList();
+    return list.filter((n) => {
+      if (params.userId && n.user_id === params.userId) return true;
+      if (params.bengkelId && n.bengkel_id === params.bengkelId) {
+        if (params.role === "admin" || params.role === "owner") return true;
+      }
+      if (!n.user_id && !n.bengkel_id) return true;
+      return false;
+    });
+  },
+
+  async create(payload: {
+    user_id?: string | null;
+    bengkel_id?: string | null;
+    judul: string;
+    pesan: string;
+    tipe: TipeNotifikasi;
+    tautan_url?: string | null;
+  }): Promise<NotifikasiRow> {
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const newRow: NotifikasiRow = {
+      id,
+      user_id: payload.user_id ?? (null as any),
+      bengkel_id: payload.bengkel_id ?? null,
+      judul: payload.judul,
+      pesan: payload.pesan,
+      tipe: payload.tipe,
+      tautan_url: payload.tautan_url ?? null,
+      is_read: false,
+      created_at: now,
+    };
+
+    // Save to local fallback
+    const currentList = getLocalNotifikasiList();
+    saveLocalNotifikasiList([newRow, ...currentList]);
+
+    if (!isSupabaseConfigured()) {
+      return newRow;
+    }
+
+    try {
+      const { data, error } = await supabase()
+        .from("notifikasi")
+        .insert({
+          id,
+          user_id: payload.user_id ?? null,
+          bengkel_id: payload.bengkel_id ?? null,
+          judul: payload.judul,
+          pesan: payload.pesan,
+          tipe: payload.tipe,
+          tautan_url: payload.tautan_url ?? null,
+          is_read: false,
+          created_at: now,
+        })
+        .select()
+        .maybeSingle();
+
+      if (error) {
+        console.warn("Gagal insert notifikasi ke Supabase (fallback aktif):", error.message);
+        return newRow;
+      }
+      return (data as NotifikasiRow) ?? newRow;
+    } catch (err) {
+      console.warn("Exception create notifikasi:", err);
+      return newRow;
+    }
+  },
+
+  async markAsRead(id: string): Promise<void> {
+    const list = getLocalNotifikasiList();
+    saveLocalNotifikasiList(list.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
+
+    if (!isSupabaseConfigured()) return;
+    try {
+      await supabase().from("notifikasi").update({ is_read: true }).eq("id", id);
+    } catch (err) {
+      console.warn("Exception markAsRead notifikasi:", err);
+    }
+  },
+
+  async markAllAsRead(params: { userId?: string; bengkelId?: string; role?: string }): Promise<void> {
+    const list = getLocalNotifikasiList();
+    saveLocalNotifikasiList(
+      list.map((n) => {
+        let match = false;
+        if (params.userId && n.user_id === params.userId) match = true;
+        if (params.bengkelId && n.bengkel_id === params.bengkelId && (params.role === "admin" || params.role === "owner")) match = true;
+        if (!params.userId && !params.bengkelId) match = true;
+        return match ? { ...n, is_read: true } : n;
+      }),
+    );
+
+    if (!isSupabaseConfigured()) return;
+    try {
+      let query = supabase().from("notifikasi").update({ is_read: true }).eq("is_read", false);
+      if (params.userId) {
+        if (params.bengkelId && (params.role === "admin" || params.role === "owner")) {
+          query = query.or(`user_id.eq.${params.userId},bengkel_id.eq.${params.bengkelId}`);
+        } else {
+          query = query.eq("user_id", params.userId);
+        }
+      } else if (params.bengkelId) {
+        query = query.eq("bengkel_id", params.bengkelId);
+      }
+      await query;
+    } catch (err) {
+      console.warn("Exception markAllAsRead notifikasi:", err);
+    }
+  },
+
+  async getWorkshopStaffUserIds(bengkelId: string): Promise<string[]> {
+    if (!isSupabaseConfigured()) return [];
+    try {
+      const uids = new Set<string>();
+      const [adminsRes, ownersRes] = await Promise.allSettled([
+        supabase().from("admin").select("user_id").eq("id_bengkel", bengkelId),
+        supabase().from("owner").select("user_id").eq("id_bengkel", bengkelId),
+      ]);
+
+      if (adminsRes.status === "fulfilled" && adminsRes.value.data) {
+        adminsRes.value.data.forEach((r: any) => {
+          if (r.user_id) uids.add(r.user_id);
+        });
+      }
+      if (ownersRes.status === "fulfilled" && ownersRes.value.data) {
+        ownersRes.value.data.forEach((r: any) => {
+          if (r.user_id) uids.add(r.user_id);
+        });
+      }
+      return Array.from(uids);
+    } catch {
+      return [];
+    }
+  },
+
+  async notifyWorkshopStaff(params: {
+    bengkelId: string;
+    judul: string;
+    pesan: string;
+    tipe: TipeNotifikasi;
+    tautanUrl: string;
+  }): Promise<void> {
+    const staffIds = await this.getWorkshopStaffUserIds(params.bengkelId);
+
+    // Insert broadcast row with bengkel_id
+    await this.create({
+      bengkel_id: params.bengkelId,
+      user_id: null,
+      judul: params.judul,
+      pesan: params.pesan,
+      tipe: params.tipe,
+      tautan_url: params.tautanUrl,
+    });
+
+    // Also insert specifically for each staff member user_id
+    for (const uid of staffIds) {
+      await this.create({
+        bengkel_id: params.bengkelId,
+        user_id: uid,
+        judul: params.judul,
+        pesan: params.pesan,
+        tipe: params.tipe,
+        tautan_url: params.tautanUrl,
+      });
+    }
+  },
+
+  async notifyCustomer(params: {
+    userId?: string | null;
+    customerId?: string | null;
+    bengkelId?: string | null;
+    judul: string;
+    pesan: string;
+    tipe: TipeNotifikasi;
+    tautanUrl: string;
+  }): Promise<void> {
+    let targetUserId = params.userId;
+    if (!targetUserId && params.customerId) {
+      try {
+        const pel = await pelangganService.getById(params.customerId);
+        if (pel?.user_id) {
+          targetUserId = pel.user_id;
+        }
+      } catch {}
+    }
+
+    await this.create({
+      user_id: targetUserId ?? null,
+      bengkel_id: params.bengkelId ?? null,
+      judul: params.judul,
+      pesan: params.pesan,
+      tipe: params.tipe,
+      tautan_url: params.tautanUrl,
+    });
+  },
+};
+
+
 export const pembayaranService = {
   async getAll(workshopId?: string): Promise<PembayaranRow[]> {
     if (!isSupabaseConfigured()) return [];
     try {
-      let query = supabase().from("pembayaran").select("*").order("created_at", { ascending: false });
-      if (workshopId) {
-        query = query.or(`workshop_id.eq.${workshopId},id_bengkel.eq.${workshopId}`);
-      }
+      const query = supabase()
+        .from("pembayaran")
+        .select("*, servis(id_bengkel, nomor_servis, total_biaya, pelanggan(nama, no_hp, email), kendaraan(merk, tipe, nopol))")
+        .order("created_at", { ascending: false });
+
       const { data, error } = await query;
       if (error) {
-        const { data: fallbackData } = await supabase().from("pembayaran").select("*").order("created_at", { ascending: false });
-        return (fallbackData as PembayaranRow[]) ?? [];
+        const { data: fallbackData } = await supabase()
+          .from("pembayaran")
+          .select("*")
+          .order("created_at", { ascending: false });
+        let list = (fallbackData as PembayaranRow[]) ?? [];
+        if (workshopId) {
+          list = list.filter((r: any) => (r.id_bengkel || r.workshop_id) === workshopId);
+        }
+        return list;
       }
-      return (data as PembayaranRow[]) ?? [];
+
+      let rows = (data as any[]) ?? [];
+      if (workshopId) {
+        rows = rows.filter((r) => {
+          const wb = r.id_bengkel || r.workshop_id || r.servis?.id_bengkel;
+          return wb === workshopId;
+        });
+      }
+
+      return rows.map((r) => ({
+        ...r,
+        id_bengkel: r.id_bengkel || r.servis?.id_bengkel || null,
+        workshop_id: r.workshop_id || r.servis?.id_bengkel || null,
+      })) as PembayaranRow[];
     } catch {
       return [];
     }
@@ -1548,11 +2326,15 @@ export const pembayaranService = {
     try {
       const { data, error } = await supabase()
         .from("pembayaran")
-        .select("*")
+        .select("*, servis(id_bengkel, nomor_servis, total_biaya, pelanggan(nama, no_hp, email), kendaraan(merk, tipe, nopol))")
         .eq("id_servis", idServis)
         .maybeSingle();
-      if (error) return null;
-      return data as PembayaranRow;
+      if (error || !data) return null;
+      return {
+        ...data,
+        id_bengkel: (data as any).id_bengkel || (data as any).servis?.id_bengkel || null,
+        workshop_id: (data as any).workshop_id || (data as any).servis?.id_bengkel || null,
+      } as PembayaranRow;
     } catch {
       return null;
     }
@@ -1570,37 +2352,76 @@ export const pembayaranService = {
     bukti_pembayaran?: string;
   }): Promise<PembayaranRow> {
     const wbId = payload.workshop_id || payload.id_bengkel || "bengkel-001";
+    const now = new Date().toISOString();
+    const metLower = (payload.metode_pembayaran || "cash").toLowerCase();
+    const metDisplay = metLower === "qris" ? "QRIS" : metLower === "transfer" ? "Transfer Bank" : "Cash";
+    const stLower = (payload.status_pembayaran || "belum_dibayar").toLowerCase();
+    const stDisplay =
+      stLower === "lunas"
+        ? "Lunas"
+        : stLower === "menunggu_verifikasi"
+          ? "Menunggu Verifikasi"
+          : stLower === "ditolak"
+            ? "Bukti Ditolak"
+            : "Belum Dibayar";
+
     if (!isSupabaseConfigured()) {
       return {
         id_pembayaran: crypto.randomUUID(),
         nomor_transaksi: payload.nomor_transaksi,
+        no_transaksi: payload.nomor_transaksi,
         id_servis: payload.id_servis,
         id_pelanggan: payload.id_pelanggan,
         workshop_id: wbId,
         id_bengkel: wbId,
         metode_pembayaran: payload.metode_pembayaran,
-        tanggal_bayar: new Date().toISOString(),
+        metode: metDisplay,
+        tanggal_bayar: now,
         jumlah_bayar: payload.jumlah_bayar,
-        status_pembayaran: payload.status_pembayaran ?? "belum_dibayar",
+        total_bayar: payload.jumlah_bayar,
+        status_pembayaran: (payload.status_pembayaran ?? "belum_dibayar") as StatusPembayaran,
+        status: stDisplay,
         bukti_pembayaran: payload.bukti_pembayaran ?? null,
+        bukti_url: payload.bukti_pembayaran ?? null,
         alasan_penolakan: null,
         verified_by: null,
         verified_at: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        created_at: now,
+        updated_at: now,
       };
     }
+
+    const insertData: any = {
+      id_pembayaran: `pmb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      nomor_transaksi: payload.nomor_transaksi,
+      no_transaksi: payload.nomor_transaksi,
+      id_servis: payload.id_servis,
+      id_pelanggan: payload.id_pelanggan,
+      metode_pembayaran: metLower,
+      metode: metDisplay,
+      tanggal_bayar: now,
+      jumlah_bayar: payload.jumlah_bayar,
+      total_bayar: payload.jumlah_bayar,
+      status_pembayaran: stLower,
+      status: stDisplay,
+      bukti_pembayaran: payload.bukti_pembayaran ?? null,
+      bukti_url: payload.bukti_pembayaran ?? null,
+      created_at: now,
+      updated_at: now,
+    };
+
     const { data, error } = await supabase()
       .from("pembayaran")
-      .insert({
-        ...payload,
-        workshop_id: wbId,
-        id_bengkel: wbId,
-      })
+      .insert(insertData)
       .select()
       .single();
+
     if (error) throw error;
-    return data as PembayaranRow;
+    return {
+      ...data,
+      id_bengkel: wbId,
+      workshop_id: wbId,
+    } as PembayaranRow;
   },
 
   async submitPembayaran(
@@ -1620,14 +2441,18 @@ export const pembayaranService = {
 
     if (!isSupabaseConfigured()) throw new Error("Supabase tidak aktif");
 
-    // Fetch service info
-    const { data: srv } = await supabase()
+    // Fetch service info — pastikan kolom query ada di tabel servis
+    const { data: srv, error: srvErr } = await supabase()
       .from("servis")
-      .select("nomor_servis, id_pelanggan, total_biaya, workshop_id, id_bengkel, pelanggan(nama)")
+      .select("nomor_servis, id_pelanggan, total_biaya, id_bengkel, pelanggan(nama)")
       .eq("id_servis", idServis)
       .maybeSingle();
 
-    const wbId = srv?.workshop_id || srv?.id_bengkel || "bengkel-001";
+    if (srvErr) {
+      console.warn("Gagal mengambil data servis untuk pembayaran:", srvErr);
+    }
+
+    const wbId = srv?.id_bengkel || "bengkel-001";
     const customerName = (srv?.pelanggan as any)?.nama || "Pelanggan";
 
     // Duplicate payment protection
@@ -1642,88 +2467,83 @@ export const pembayaranService = {
     }
 
     const now = new Date().toISOString();
+    const metLower = (metode || "cash").toLowerCase();
+    const metDisplay = metLower === "qris" ? "QRIS" : metLower === "transfer" ? "Transfer Bank" : "Cash";
+    const stLower = "menunggu_verifikasi";
+    const stDisplay = "Menunggu Verifikasi";
+    const noTrx = srv?.nomor_servis
+      ? `TRX-${srv.nomor_servis.replace("SRV-", "")}`
+      : `TRX-${Date.now().toString(36).toUpperCase()}`;
+    const totalAmount = Number(srv?.total_biaya || 0);
+
     let result: PembayaranRow;
 
     if (existing?.id_pembayaran) {
       const updateData: any = {
-        metode_pembayaran: metode,
+        nomor_transaksi: noTrx,
+        no_transaksi: noTrx,
+        metode_pembayaran: metLower,
+        metode: metDisplay,
         tanggal_bayar: now,
-        status_pembayaran: "menunggu_verifikasi",
+        jumlah_bayar: totalAmount,
+        total_bayar: totalAmount,
+        status_pembayaran: stLower,
+        status: stDisplay,
         bukti_pembayaran: buktiUrl ?? null,
+        bukti_url: buktiUrl ?? null,
         alasan_penolakan: null,
         updated_at: now,
-        workshop_id: wbId,
-        id_bengkel: wbId,
       };
 
-      let res = await supabase()
+      const res = await supabase()
         .from("pembayaran")
         .update(updateData)
         .eq("id_pembayaran", existing.id_pembayaran)
         .select()
-        .maybeSingle();
+        .single();
 
-      if (res.error) {
-        delete updateData.workshop_id;
-        delete updateData.id_bengkel;
-        res = await supabase()
-          .from("pembayaran")
-          .update(updateData)
-          .eq("id_pembayaran", existing.id_pembayaran)
-          .select()
-          .single();
-      }
+      if (res.error) throw res.error;
       result = res.data as PembayaranRow;
     } else {
-      const noTrx = srv?.nomor_servis
-        ? `TRX-${srv.nomor_servis.replace("SRV-", "")}`
-        : `TRX-${Date.now().toString(36).toUpperCase()}`;
-
       const insertData: any = {
         id_pembayaran: `pmb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
         nomor_transaksi: noTrx,
+        no_transaksi: noTrx,
         id_servis: idServis,
-        id_pelanggan: srv?.id_pelanggan || "pelanggan-001",
-        workshop_id: wbId,
-        id_bengkel: wbId,
-        metode_pembayaran: metode,
+        id_pelanggan: srv?.id_pelanggan,
+        metode_pembayaran: metLower,
+        metode: metDisplay,
         tanggal_bayar: now,
-        jumlah_bayar: srv?.total_biaya || 0,
-        status_pembayaran: "menunggu_verifikasi",
+        jumlah_bayar: totalAmount,
+        total_bayar: totalAmount,
+        status_pembayaran: stLower,
+        status: stDisplay,
         bukti_pembayaran: buktiUrl ?? null,
+        bukti_url: buktiUrl ?? null,
         created_at: now,
         updated_at: now,
       };
 
-      let res = await supabase()
+      const res = await supabase()
         .from("pembayaran")
         .insert(insertData)
         .select()
-        .maybeSingle();
+        .single();
 
-      if (res.error) {
-        delete insertData.workshop_id;
-        delete insertData.id_bengkel;
-        res = await supabase()
-          .from("pembayaran")
-          .insert(insertData)
-          .select()
-          .single();
-      }
+      if (res.error) throw res.error;
       result = res.data as PembayaranRow;
     }
 
     // Send in-app notification to Admin
-    const noTrx = result.nomor_transaksi || srv?.nomor_servis || "TRX";
     let notifSubject = "Pembayaran Menunggu Verifikasi";
     let notifMsg = `Pelanggan ${customerName} telah mengirim pembayaran untuk transaksi ${noTrx}.`;
-    if (metode === "qris") {
+    if (metLower === "qris") {
       notifSubject = "Pembayaran QRIS Menunggu Verifikasi";
       notifMsg = `Pelanggan ${customerName} telah mengirim bukti pembayaran QRIS untuk transaksi ${noTrx}.`;
-    } else if (metode === "transfer") {
+    } else if (metLower === "transfer") {
       notifSubject = "Pembayaran Transfer Menunggu Verifikasi";
       notifMsg = `Pelanggan ${customerName} telah mengirim bukti transfer untuk transaksi ${noTrx}.`;
-    } else if (metode === "cash") {
+    } else if (metLower === "cash") {
       notifSubject = "Pembayaran Cash Menunggu Verifikasi";
       notifMsg = `Pelanggan ${customerName} telah mengonfirmasi pembayaran secara tunai untuk transaksi ${noTrx}.`;
     }
@@ -1739,9 +2559,20 @@ export const pembayaranService = {
         message: notifMsg,
         status: "sent",
       });
+      await notifikasiService.notifyWorkshopStaff({
+        bengkelId: wbId,
+        judul: notifSubject,
+        pesan: `Pembayaran baru (${noTrx}) menunggu verifikasi.`,
+        tipe: "pembayaran",
+        tautanUrl: `/admin/pembayaran?filter=menunggu_verifikasi&trx=${noTrx}`,
+      });
     } catch {}
 
-    return result;
+    return {
+      ...result,
+      id_bengkel: wbId,
+      workshop_id: wbId,
+    };
   },
 
   async verifikasiPembayaran(
@@ -1758,6 +2589,7 @@ export const pembayaranService = {
     const now = new Date().toISOString();
     const updatePayload: any = {
       status_pembayaran: disetujui ? "lunas" : "ditolak",
+      status: disetujui ? "Lunas" : "Bukti Ditolak",
       alasan_penolakan: disetujui ? null : (alasan?.trim() ?? null),
       verified_by: verifiedBy ?? null,
       verified_at: now,
@@ -1812,6 +2644,16 @@ export const pembayaranService = {
         message: notifMsg,
         status: "sent",
       });
+      await notifikasiService.notifyCustomer({
+        customerId: srv?.id_pelanggan,
+        bengkelId: srv?.id_bengkel || srv?.workshop_id,
+        judul: disetujui ? "Pembayaran Diterima (Lunas)" : "Pembayaran Ditolak",
+        pesan: disetujui
+          ? "Pembayaran Anda telah Diterima (Lunas)."
+          : `Pembayaran Anda telah Ditolak dengan alasan: ${alasan?.trim() || "Bukti tidak valid"}.`,
+        tipe: "pembayaran",
+        tautanUrl: `/pelanggan/pembayaran?trx=${noTrx}`,
+      });
     } catch {}
 
     return data as PembayaranRow;
@@ -1860,38 +2702,23 @@ export const mekanikService = {
     if (!isSupabaseConfigured()) return [];
     try {
       const { data, error } = await supabase()
-        .from("workshops")
+        .from("bengkel")
         .select("*")
-        .order("name", { ascending: true });
+        .order("nama_bengkel", { ascending: true });
       if (!error && data && data.length > 0) {
-        return data.map((w: WorkshopRow) => ({
-          id_bengkel: w.id,
-          workshop_id: w.id,
-          nama_bengkel: w.name,
-          alamat: w.address ?? null,
-          no_telepon: w.phone ?? null,
-          created_at: w.created_at,
-          updated_at: w.updated_at,
-        }));
+        return data;
       }
     } catch (e) {
-      void e;
-      // fallback jika tabel workshops belum ada
+      console.warn("Gagal getBengkel dari tabel bengkel:", e);
     }
-
-    const { data, error } = await supabase()
-      .from("bengkel")
-      .select("*")
-      .order("nama_bengkel", { ascending: true });
-    if (error) throw error;
-    return data ?? [];
+    return [];
   },
 
   async getMekanik(idBengkel?: string): Promise<MekanikRow[]> {
     if (!isSupabaseConfigured()) return [];
     let query = supabase().from("mekanik").select("*").order("nama_mekanik", { ascending: true });
     if (idBengkel) {
-      query = query.or(`workshop_id.eq.${idBengkel},id_bengkel.eq.${idBengkel}`);
+      query = query.eq("id_bengkel", idBengkel);
     }
     const { data, error } = await query;
     if (error) throw error;
@@ -1900,6 +2727,7 @@ export const mekanikService = {
 
   async create(payload: {
     id_mekanik?: string;
+    bengkel_id?: string;
     workshop_id?: string;
     id_bengkel: string;
     nama_mekanik: string;
@@ -1909,13 +2737,12 @@ export const mekanikService = {
   }): Promise<MekanikRow> {
     const idMekanik =
       payload.id_mekanik || `mk-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    const wbId = payload.workshop_id || payload.id_bengkel;
+    const idBengkel = payload.id_bengkel || payload.bengkel_id || payload.workshop_id || "bengkel-001";
 
     if (!isSupabaseConfigured()) {
       return {
         id_mekanik: idMekanik,
-        workshop_id: wbId,
-        id_bengkel: payload.id_bengkel,
+        id_bengkel: idBengkel,
         nama_mekanik: payload.nama_mekanik,
         no_telepon: payload.no_telepon ?? null,
         spesialisasi: payload.spesialisasi ?? null,
@@ -1928,8 +2755,7 @@ export const mekanikService = {
       .from("mekanik")
       .insert({
         id_mekanik: idMekanik,
-        workshop_id: wbId,
-        id_bengkel: payload.id_bengkel,
+        id_bengkel: idBengkel,
         nama_mekanik: payload.nama_mekanik,
         no_telepon: payload.no_telepon ?? null,
         spesialisasi: payload.spesialisasi ?? null,
@@ -1941,11 +2767,12 @@ export const mekanikService = {
     return data;
   },
 
-  async update(idMekanik: string, payload: Partial<MekanikRow>): Promise<MekanikRow> {
+  async update(idMekanik: string, payload: Partial<MekanikRow> & Record<string, any>): Promise<MekanikRow> {
     if (!isSupabaseConfigured()) throw new Error("Supabase tidak aktif");
+    const { workshop_id, bengkelId, ...cleanPayload } = payload;
     const { data, error } = await supabase()
       .from("mekanik")
-      .update(payload)
+      .update(cleanPayload)
       .eq("id_mekanik", idMekanik)
       .select()
       .single();
@@ -2606,40 +3433,52 @@ export const customerServiceTicketService = {
         const local = localStorage.getItem(LOCAL_CS_TICKETS_KEY);
         if (local) {
           const parsed = JSON.parse(local);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            // Bersihkan mock ticket lama yang mengandung teks hardcoded QRIS atau cs-mock-1 lama
+            const cleaned = parsed.filter(
+              (t: CSTicketRow) =>
+                t.id !== "cs-mock-1" &&
+                !t.pesan?.includes("upload bukti pembayaran QRIS tapi status masih menunggu"),
+            );
+            // Pastikan data Anzar Amanah selalu terhubung ke Bengkel Fandi Motor
+            const sanitized = cleaned.map((t: CSTicketRow) => {
+              if (
+                (t.user_email && t.user_email.toLowerCase().includes("anzar")) ||
+                (t.user_name && t.user_name.toLowerCase().includes("anzar"))
+              ) {
+                return {
+                  ...t,
+                  user_name: "Anzar Amanah",
+                  user_email: "anzaramanah@gmail.com",
+                  user_role: "admin_bengkel",
+                  bengkel_id: "bengkel-2307",
+                  bengkel_nama: "Bengkel Fandi Motor",
+                };
+              }
+              return t;
+            });
+            if (sanitized.length > 0) {
+              localStorage.setItem(LOCAL_CS_TICKETS_KEY, JSON.stringify(sanitized));
+              return sanitized;
+            }
+          }
         }
       } catch {}
     }
 
     const defaultTickets: CSTicketRow[] = [
       {
-        id: "cs-mock-1",
+        id: "cs-sample-1",
         ticket_number: "CS-0001",
-        user_id: "usr-demo-1",
-        user_name: "Anzar Amanah F",
-        user_email: "anzar@gmail.com",
-        user_role: "pelanggan",
-        bengkel_id: "bengkel-001",
-        bengkel_nama: "AppBenk Pusat",
-        subjek: "Pembayaran QRIS tidak langsung terverifikasi",
-        kategori: "Pembayaran",
-        pesan: "Halo admin AppBenk, saya sudah upload bukti pembayaran QRIS tapi status masih menunggu verifikasi sejak 1 jam lalu.",
-        status: "Baru",
-        created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
-        updated_at: new Date(Date.now() - 3600000 * 2).toISOString(),
-      },
-      {
-        id: "cs-mock-2",
-        ticket_number: "CS-0002",
         user_id: "usr-demo-2",
         user_name: "Ahmad Wijaya",
         user_email: "ahmad.pitstop@gmail.com",
         user_role: "owner",
         bengkel_id: "bengkel-002",
         bengkel_nama: "Pitstop Jaya Motor",
-        subjek: "Permintaan aktivasi fitur Premium Laporan Keuntungan",
-        kategori: "Premium",
-        pesan: "Kami sudah transfer biaya langganan tahunan untuk bengkel kami. Mohon bantu upgrade ke paket Premium.",
+        subjek: "Panduan setup operasional & pencetakan nota servis",
+        kategori: "Bantuan Operasional",
+        pesan: "Halo tim AppBenk, kami ingin menanyakan panduan konfigurasi format pencetakan nota dan alur servis untuk bengkel kami.",
         status: "Diproses",
         created_at: new Date(Date.now() - 86400000).toISOString(),
         updated_at: new Date(Date.now() - 3600000 * 5).toISOString(),
@@ -2651,7 +3490,8 @@ export const customerServiceTicketService = {
     return defaultTickets;
   },
 
-  async getMyTickets(userId: string, userEmail?: string): Promise<CSTicketRow[]> {
+  async getMyTickets(userId: string, userEmail?: string, workshopId?: string): Promise<CSTicketRow[]> {
+    let supabaseTickets: CSTicketRow[] = [];
     if (isSupabaseConfigured() && userId) {
       try {
         let q = supabase()
@@ -2664,16 +3504,41 @@ export const customerServiceTicketService = {
           q = q.eq("user_id", userId);
         }
         const { data, error } = await q;
-        if (!error && data) return data as CSTicketRow[];
+        if (!error && Array.isArray(data) && data.length > 0) {
+          supabaseTickets = data as CSTicketRow[];
+        }
       } catch {}
     }
 
     const all = await this.getAllTickets();
-    return all.filter(
-      (t) =>
-        t.user_id === userId ||
-        (userEmail && t.user_email && t.user_email.toLowerCase() === userEmail.toLowerCase()),
+    const isAnzar =
+      (userEmail && userEmail.toLowerCase().includes("anzar")) ||
+      userId === "usr-demo-1";
+
+    const localFiltered = all.filter((t) => {
+      const matchId = t.user_id === userId;
+      const matchEmail =
+        userEmail &&
+        t.user_email &&
+        t.user_email.toLowerCase() === userEmail.toLowerCase();
+      const matchAnzar =
+        isAnzar &&
+        ((t.user_email && t.user_email.toLowerCase().includes("anzar")) ||
+          (t.user_name && t.user_name.toLowerCase().includes("anzar")));
+      const matchWorkshop =
+        workshopId &&
+        t.bengkel_id &&
+        (t.bengkel_id === workshopId || (isAnzar && t.bengkel_id === "bengkel-2307"));
+      return matchId || matchEmail || matchAnzar || matchWorkshop;
+    });
+
+    const map = new Map<string, CSTicketRow>();
+    localFiltered.forEach((t) => map.set(t.id, t));
+    supabaseTickets.forEach((t) => map.set(t.id, t));
+    const merged = Array.from(map.values()).sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
     );
+    return merged;
   },
 
   async createTicket(payload: {
@@ -2692,15 +3557,30 @@ export const customerServiceTicketService = {
     const newId = crypto.randomUUID();
     const nowIso = new Date().toISOString();
 
+    const isAnzar =
+      (payload.userEmail && payload.userEmail.toLowerCase().includes("anzar")) ||
+      (payload.userName && payload.userName.toLowerCase().includes("anzar"));
+
+    const normalizedRole =
+      payload.userRole === "admin"
+        ? "admin_bengkel"
+        : payload.userRole || "admin_bengkel";
+    const workshopId = isAnzar ? "bengkel-2307" : payload.bengkelId || "bengkel-2307";
+    const workshopName = isAnzar
+      ? "Bengkel Fandi Motor"
+      : payload.bengkelNama || "Bengkel Fandi Motor";
+    const finalUserName = isAnzar ? "Anzar Amanah" : payload.userName;
+    const finalUserEmail = isAnzar ? "anzaramanah@gmail.com" : payload.userEmail;
+
     const newTicket: CSTicketRow = {
       id: newId,
       ticket_number: nextNum,
       user_id: payload.userId,
-      user_name: payload.userName,
-      user_email: payload.userEmail,
-      user_role: payload.userRole,
-      bengkel_id: payload.bengkelId || "bengkel-001",
-      bengkel_nama: payload.bengkelNama || "AppBenk Workshop",
+      user_name: finalUserName,
+      user_email: finalUserEmail,
+      user_role: normalizedRole,
+      bengkel_id: workshopId,
+      bengkel_nama: workshopName,
       subjek: payload.subjek,
       kategori: payload.kategori,
       pesan: payload.pesan,
@@ -2709,17 +3589,34 @@ export const customerServiceTicketService = {
       updated_at: nowIso,
     };
 
+    // 1. Simpan pesan pertama ke percakapan tiket
+    await this.sendMessage({
+      ticketId: newId,
+      senderUserId: payload.userId,
+      senderRole: normalizedRole as any,
+      senderName: finalUserName,
+      message: payload.pesan,
+    });
+
+    // 2. Simpan tiket ke localStorage terlebih dahulu agar instan tersedia
+    try {
+      const updated = [newTicket, ...all.filter((t) => t.id !== newId)];
+      localStorage.setItem(LOCAL_CS_TICKETS_KEY, JSON.stringify(updated));
+    } catch {}
+
+    // 3. Simpan ke Supabase jika tersedia
     if (isSupabaseConfigured()) {
       try {
         const { data, error } = await supabase()
           .from("customer_service_tickets")
           .insert({
+            id: newId,
             user_id: payload.userId,
-            user_name: payload.userName,
-            user_email: payload.userEmail,
-            user_role: payload.userRole,
-            bengkel_id: payload.bengkelId || "bengkel-001",
-            bengkel_nama: payload.bengkelNama || "AppBenk Workshop",
+            user_name: finalUserName,
+            user_email: finalUserEmail,
+            user_role: normalizedRole,
+            bengkel_id: workshopId,
+            bengkel_nama: workshopName,
             subjek: payload.subjek,
             kategori: payload.kategori,
             pesan: payload.pesan,
@@ -2727,32 +3624,26 @@ export const customerServiceTicketService = {
           })
           .select()
           .single();
+
         if (!error && data) {
-          // Buat pesan pertama
           await this.sendMessage({
             ticketId: data.id,
             senderUserId: payload.userId,
-            senderRole: payload.userRole as any,
-            senderName: payload.userName,
+            senderRole: normalizedRole as any,
+            senderName: finalUserName,
             message: payload.pesan,
           });
+          try {
+            const updated = [
+              data as CSTicketRow,
+              ...all.filter((t) => t.id !== data.id && t.id !== newId),
+            ];
+            localStorage.setItem(LOCAL_CS_TICKETS_KEY, JSON.stringify(updated));
+          } catch {}
           return data as CSTicketRow;
         }
       } catch {}
     }
-
-    // Fallback lokal
-    try {
-      localStorage.setItem(LOCAL_CS_TICKETS_KEY, JSON.stringify([newTicket, ...all]));
-      // Buat pesan awal di riwayat chat
-      await this.sendMessage({
-        ticketId: newId,
-        senderUserId: payload.userId,
-        senderRole: payload.userRole as any,
-        senderName: payload.userName,
-        message: payload.pesan,
-      });
-    } catch {}
 
     return newTicket;
   },
@@ -2874,4 +3765,531 @@ export const customerServiceTicketService = {
     return true;
   },
 };
+
+// ----------------------------------------------------------------------------
+// 17. WORKSHOP ONBOARDING APPLICATION SERVICE
+// ----------------------------------------------------------------------------
+export const workshopApplicationService = {
+  async getLatestApplication(userId: string): Promise<WorkshopApplicationRow | null> {
+    if (!isSupabaseConfigured()) {
+      throw new Error("Layanan Supabase belum dikonfigurasi.");
+    }
+
+    const { data, error } = await supabase()
+      .from("workshop_applications")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Failed to query workshop_applications from Supabase:", error);
+      throw error;
+    }
+
+    return (data as WorkshopApplicationRow | null) ?? null;
+  },
+
+  async getAllApplications(): Promise<WorkshopApplicationRow[]> {
+    if (!isSupabaseConfigured()) {
+      return [];
+    }
+
+    const { data, error } = await supabase()
+      .from("workshop_applications")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Failed to query all workshop_applications:", error);
+      throw error;
+    }
+
+    return (data as WorkshopApplicationRow[]) ?? [];
+  },
+
+  async createApplication(payload: {
+    userId: string;
+    namaBengkel: string;
+    alamat: string;
+    noTelepon: string;
+    ownerNama: string;
+    ownerEmail: string;
+    paket: "Basic" | "Premium";
+  }): Promise<{ data?: WorkshopApplicationRow; error?: string }> {
+    if (!isSupabaseConfigured()) {
+      return {
+        error: "Layanan pengajuan bengkel sedang tidak tersedia. Silakan coba lagi.",
+      };
+    }
+
+    try {
+      const { data, error } = await supabase()
+        .from("workshop_applications")
+        .insert({
+          user_id: payload.userId,
+          nama_bengkel: payload.namaBengkel.trim(),
+          alamat: payload.alamat.trim(),
+          no_telepon: payload.noTelepon.trim(),
+          owner_nama: payload.ownerNama.trim(),
+          owner_email: payload.ownerEmail.trim().toLowerCase(),
+          paket: payload.paket,
+          status: "PENDING",
+        })
+        .select("*")
+        .single();
+
+      if (error) {
+        if (
+          error.code === "23505" ||
+          error.message.includes("idx_one_pending_app_per_user") ||
+          error.message.toLowerCase().includes("unique")
+        ) {
+          return {
+            error:
+              "Pengajuan pendaftaran bengkel Anda masih dalam proses peninjauan. Silakan tunggu persetujuan dari tim AppBenk.",
+          };
+        }
+        return { error: error.message };
+      }
+
+      return { data: data as WorkshopApplicationRow };
+    } catch (err: any) {
+      return {
+        error:
+          err?.message ||
+          "Terjadi kesalahan saat menyimpan pengajuan pendaftaran bengkel.",
+      };
+    }
+  },
+
+  async approveApplication(
+    applicationId: string,
+  ): Promise<{ ok: boolean; error?: string; id_bengkel?: string }> {
+    if (!isSupabaseConfigured()) {
+      return { ok: false, error: "Layanan Supabase belum dikonfigurasi." };
+    }
+
+    try {
+      const { data, error } = await supabase().rpc("approve_workshop_application", {
+        p_application_id: applicationId,
+      });
+
+      if (error) {
+        return { ok: false, error: error.message };
+      }
+
+      if (data && typeof data === "object") {
+        if (data.ok === false) {
+          return { ok: false, error: data.error || "Gagal menyetujui pengajuan bengkel." };
+        }
+        return { ok: true, id_bengkel: data.id_bengkel };
+      }
+
+      return { ok: true };
+    } catch (err: any) {
+      return {
+        ok: false,
+        error: err?.message || "Terjadi kesalahan saat memproses persetujuan pengajuan.",
+      };
+    }
+  },
+
+  async rejectApplication(
+    applicationId: string,
+    alasan: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!isSupabaseConfigured()) {
+      return { ok: false, error: "Layanan Supabase belum dikonfigurasi." };
+    }
+
+    try {
+      const { data, error } = await supabase().rpc("reject_workshop_application", {
+        p_application_id: applicationId,
+        p_alasan: alasan.trim(),
+      });
+
+      if (error) {
+        return { ok: false, error: error.message };
+      }
+
+      if (data && typeof data === "object") {
+        if (data.ok === false) {
+          return { ok: false, error: data.error || "Gagal menolak pengajuan bengkel." };
+        }
+        return { ok: true };
+      }
+
+      return { ok: true };
+    } catch (err: any) {
+      return {
+        ok: false,
+        error: err?.message || "Terjadi kesalahan saat memproses penolakan pengajuan.",
+      };
+    }
+  },
+};
+
+// ----------------------------------------------------------------------------
+// 18. ADMIN INVITATION SERVICE (OWNER -> STAFF ADMIN ONBOARDING)
+// ----------------------------------------------------------------------------
+export const adminInvitationService = {
+  async getWorkshopAdmins(bengkelId: string): Promise<AdminRow[]> {
+    if (!isSupabaseConfigured() || !bengkelId) return [];
+
+    try {
+      const { data, error } = await supabase()
+        .from("admin")
+        .select("*")
+        .eq("id_bengkel", bengkelId)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      return (data as AdminRow[]) ?? [];
+    } catch (err) {
+      console.error("Failed to query workshop admins:", err);
+      return [];
+    }
+  },
+
+  async getWorkshopInvitations(bengkelId: string): Promise<AdminInvitationRow[]> {
+    if (!isSupabaseConfigured() || !bengkelId) return [];
+
+    try {
+      const { data, error } = await supabase()
+        .from("admin_invitations")
+        .select("*")
+        .eq("id_bengkel", bengkelId)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      return (data as AdminInvitationRow[]) ?? [];
+    } catch (err) {
+      console.error("Failed to query workshop invitations:", err);
+      return [];
+    }
+  },
+
+  async createInvitation(
+    nama: string,
+    email: string,
+    bengkelId?: string,
+  ): Promise<{
+    ok: boolean;
+    error?: string;
+    token?: string;
+    invitation_id?: string;
+    email?: string;
+    expires_at?: string;
+    activation_link?: string;
+    data?: {
+      invitation_id?: string;
+      nama?: string;
+      email?: string;
+      bengkel_id?: string;
+      token?: string;
+      status?: string;
+      expires_at?: string;
+      activation_link?: string;
+    };
+  }> {
+    if (!isSupabaseConfigured()) {
+      return { ok: false, error: "Layanan Supabase belum dikonfigurasi." };
+    }
+
+    const cleanNama = nama.trim();
+    const envAppUrl = (
+      (typeof import.meta !== "undefined" && (import.meta as any).env?.["VITE_APP_URL"]) ||
+      (typeof process !== "undefined" && (process.env?.["VITE_APP_URL"] || process.env?.["APP_URL"])) ||
+      ""
+    ).trim().replace(/\/$/, "");
+
+    const origin =
+      typeof window !== "undefined" && window.location?.origin
+        ? window.location.origin
+        : (envAppUrl || "http://localhost:8080");
+
+    // 1. Coba panggil HTTP POST /api/invite
+    try {
+      const session = await supabase().auth.getSession();
+      const tokenHeader = session.data?.session?.access_token;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (tokenHeader) headers["Authorization"] = `Bearer ${tokenHeader}`;
+
+      const res = await fetch("/api/invite", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ nama: cleanNama, email: cleanEmail, bengkel_id: bengkelId }),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        if (json.ok) {
+          const actLink = json.activation_link || `${origin}/accept-invite?token=${json.token}`;
+          return {
+            ok: true,
+            token: json.token,
+            invitation_id: json.data?.invitation_id || json.invitation_id,
+            email: json.data?.email || cleanEmail,
+            expires_at: json.data?.expires_at,
+            activation_link: actLink,
+            data: {
+              ...json.data,
+              activation_link: actLink,
+            },
+          };
+        }
+        if (json.error) {
+          return { ok: false, error: json.error };
+        }
+      }
+    } catch {
+      // jika fetch /api/invite tidak tersedia (misal static context), fallback ke RPC langsung
+    }
+
+    // 1. Coba panggil RPC create_admin_invitation
+    try {
+      const { data: rpcData, error: rpcError } = await supabase().rpc("create_admin_invitation", {
+        p_nama: cleanNama,
+        p_email: cleanEmail,
+      });
+
+      if (!rpcError && rpcData && typeof rpcData === "object" && rpcData.ok !== false) {
+        const actLink = `${origin}/accept-invite?token=${rpcData.token}`;
+        return {
+          ok: true,
+          token: rpcData.token,
+          invitation_id: rpcData.invitation_id,
+          email: rpcData.email || cleanEmail,
+          expires_at: rpcData.expires_at,
+          activation_link: actLink,
+          data: {
+            invitation_id: rpcData.invitation_id,
+            nama: cleanNama,
+            email: rpcData.email || cleanEmail,
+            bengkel_id: rpcData.id_bengkel,
+            token: rpcData.token,
+            status: "pending",
+            expires_at: rpcData.expires_at,
+            activation_link: actLink,
+          },
+        };
+      }
+
+      // Jika RPC mengembalikan pesan error bisnis spesifik (misal: sudah terdaftar aktif)
+      if (rpcData && typeof rpcData === "object" && rpcData.ok === false) {
+        const errMsg = rpcData.error || "";
+        if (errMsg.includes("sudah terdaftar aktif") || errMsg.includes("wajib diisi")) {
+          return { ok: false, error: errMsg };
+        }
+      }
+    } catch {
+      // lanjut ke fallback direct insert
+    }
+
+    // 2. Fallback tangguh: Direct Insert ke public.admin_invitations
+    try {
+      const { data: authData } = await supabase().auth.getUser();
+      const currentAuthUser = authData?.user;
+      if (!currentAuthUser) {
+        return { ok: false, error: "Sesi login Anda tidak aktif. Silakan masuk kembali." };
+      }
+
+      // Resolusi ID Bengkel pemanggil
+      let resolvedBengkelId = bengkelId?.trim();
+      if (!resolvedBengkelId) {
+        // Cek profiles
+        const { data: prof } = await supabase()
+          .from("profiles")
+          .select("id_bengkel")
+          .eq("id", currentAuthUser.id)
+          .maybeSingle();
+        if (prof?.id_bengkel) resolvedBengkelId = prof.id_bengkel;
+      }
+      if (!resolvedBengkelId) {
+        // Cek owner
+        const { data: own } = await supabase()
+          .from("owner")
+          .select("id_bengkel")
+          .or(`user_id.eq.${currentAuthUser.id},email.ilike.${currentAuthUser.email}`)
+          .maybeSingle();
+        if (own?.id_bengkel) resolvedBengkelId = own.id_bengkel;
+      }
+      if (!resolvedBengkelId) {
+        resolvedBengkelId = "bengkel-001";
+      }
+
+      // Cek apakah admin sudah aktif di bengkel ini
+      const { data: existingAdmin } = await supabase()
+        .from("admin")
+        .select("id_admin")
+        .eq("id_bengkel", resolvedBengkelId)
+        .ilike("email", cleanEmail)
+        .eq("status", "aktif")
+        .maybeSingle();
+
+      if (existingAdmin) {
+        return {
+          ok: false,
+          error: "Staf dengan email ini sudah terdaftar aktif sebagai Admin di bengkel Anda.",
+        };
+      }
+
+      // Batalkan undangan pending lama untuk email dan bengkel ini
+      await supabase()
+        .from("admin_invitations")
+        .update({ status: "cancelled", updated_at: new Date().toISOString() })
+        .eq("id_bengkel", resolvedBengkelId)
+        .ilike("email", cleanEmail)
+        .eq("status", "pending");
+
+      // Generate token acak unik (48 karakter hex)
+      const rawToken =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? (crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "")).slice(0, 48)
+          : Math.random().toString(36).substring(2) + Date.now().toString(36) + Math.random().toString(36).substring(2);
+
+      const expiresAt = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
+
+      const { data: inserted, error: insertError } = await supabase()
+        .from("admin_invitations")
+        .insert({
+          id_bengkel: resolvedBengkelId,
+          nama: cleanNama,
+          email: cleanEmail,
+          token: rawToken,
+          created_by: currentAuthUser.id,
+          expires_at: expiresAt,
+          status: "pending",
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        return {
+          ok: false,
+          error: insertError.message || "Gagal menyimpan tautan undangan ke database.",
+        };
+      }
+
+      const actLink = `${origin}/accept-invite?token=${rawToken}`;
+      return {
+        ok: true,
+        token: rawToken,
+        invitation_id: inserted?.id,
+        email: cleanEmail,
+        expires_at: expiresAt,
+        activation_link: actLink,
+        data: {
+          invitation_id: inserted?.id,
+          nama: cleanNama,
+          email: cleanEmail,
+          bengkel_id: resolvedBengkelId,
+          token: rawToken,
+          status: "pending",
+          expires_at: expiresAt,
+          activation_link: actLink,
+        },
+      };
+    } catch (err: any) {
+      return {
+        ok: false,
+        error: err?.message || "Terjadi kesalahan saat memproses pembuatan undangan staf admin.",
+      };
+    }
+  },
+
+  async getInvitationByToken(token: string): Promise<{
+    ok: boolean;
+    error?: string;
+    data?: {
+      email: string;
+      nama: string;
+      id_bengkel: string;
+      nama_bengkel: string;
+      expires_at: string;
+    };
+  }> {
+    if (!isSupabaseConfigured()) {
+      return { ok: false, error: "Layanan Supabase belum dikonfigurasi." };
+    }
+
+    try {
+      const { data, error } = await supabase().rpc("get_invitation_by_token", {
+        p_token: token.trim(),
+      });
+
+      if (error) {
+        return { ok: false, error: error.message };
+      }
+
+      if (data && typeof data === "object") {
+        if (data.ok === false) {
+          return { ok: false, error: data.error || "Tautan undangan tidak valid atau kedaluwarsa." };
+        }
+        return {
+          ok: true,
+          data: {
+            email: data.email,
+            nama: data.nama,
+            id_bengkel: data.id_bengkel,
+            nama_bengkel: data.nama_bengkel,
+            expires_at: data.expires_at,
+          },
+        };
+      }
+
+      return { ok: false, error: "Data undangan tidak ditemukan." };
+    } catch (err: any) {
+      return {
+        ok: false,
+        error: err?.message || "Terjadi kesalahan saat memeriksa tautan undangan.",
+      };
+    }
+  },
+
+  async claimInvitation(token: string): Promise<{
+    ok: boolean;
+    error?: string;
+    id_bengkel?: string;
+    role?: string;
+  }> {
+    if (!isSupabaseConfigured()) {
+      return { ok: false, error: "Layanan Supabase belum dikonfigurasi." };
+    }
+
+    try {
+      const { data, error } = await supabase().rpc("claim_admin_invitation", {
+        p_token: token.trim(),
+      });
+
+      if (error) {
+        return { ok: false, error: error.message };
+      }
+
+      if (data && typeof data === "object") {
+        if (data.ok === false) {
+          return { ok: false, error: data.error || "Gagal mengklaim undangan staf admin." };
+        }
+        return {
+          ok: true,
+          id_bengkel: data.id_bengkel,
+          role: data.role || "admin",
+        };
+      }
+
+      return { ok: true };
+    } catch (err: any) {
+      return {
+        ok: false,
+        error: err?.message || "Terjadi kesalahan saat mengklaim undangan.",
+      };
+    }
+  },
+};
+
+
+
+
 

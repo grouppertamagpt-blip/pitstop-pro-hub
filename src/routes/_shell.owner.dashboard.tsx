@@ -8,7 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { TrendingUp, Users, Wrench, Package, Crown, ArrowRight, Inbox, Wallet, Activity, Eye } from "lucide-react";
+import { TrendingUp, Users, Wrench, Package, ArrowRight, Inbox, Wallet, Activity, Eye } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -338,22 +338,6 @@ function DashboardOwner() {
         </CardContent>
       </Card>
 
-      <Card className="border-primary/40 bg-primary/5">
-        <CardContent className="flex flex-wrap items-center gap-4 p-5">
-          <Crown className="size-6 text-primary" />
-          <div className="min-w-0 flex-1">
-            <p className="font-display text-sm font-bold">Laporan Keuntungan (Premium)</p>
-            <p className="text-xs text-muted-foreground">
-              Analisis margin, laba bersih, dan tren keuntungan bulanan.
-            </p>
-          </div>
-          <Button asChild size="sm" className="gap-1">
-            <Link to="/owner/keuntungan">
-              Buka Laporan <ArrowRight className="size-4" />
-            </Link>
-          </Button>
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader className="pb-3">

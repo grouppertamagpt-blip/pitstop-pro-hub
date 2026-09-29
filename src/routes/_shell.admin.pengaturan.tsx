@@ -26,6 +26,12 @@ import {
   Trash2,
   Edit2,
   Check,
+  Search,
+  Loader2,
+  Crown,
+  Construction,
+  Clock,
+  Lock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
@@ -61,7 +67,12 @@ import {
   type WAConfig,
   type WAProvider,
 } from "@/lib/whatsapp";
-import { BengkelMap, type BengkelLocation, DEMO_BENGKEL_LOCATION } from "@/components/bengkel-map";
+import {
+  BengkelMap,
+  type BengkelLocation,
+  DEMO_BENGKEL_LOCATION,
+  parseCoordinate,
+} from "@/components/bengkel-map";
 
 export const Route = createFileRoute("/_shell/admin/pengaturan")({
   head: () => ({
@@ -78,12 +89,19 @@ export const Route = createFileRoute("/_shell/admin/pengaturan")({
 
 const BENGKEL_LOC_KEY = "appbenk_bengkel_location";
 
-function saveBengkelLocation(loc: BengkelLocation) {
+function saveBengkelLocation(loc: BengkelLocation, workshopId?: string) {
+  if (workshopId) {
+    localStorage.setItem(`appbenk_bengkel_location_${workshopId}`, JSON.stringify(loc));
+  }
   localStorage.setItem(BENGKEL_LOC_KEY, JSON.stringify(loc));
 }
 
-function getBengkelLocation(): BengkelLocation {
+function getBengkelLocation(workshopId?: string): BengkelLocation {
   try {
+    if (workshopId) {
+      const ws = localStorage.getItem(`appbenk_bengkel_location_${workshopId}`);
+      if (ws) return JSON.parse(ws);
+    }
     const raw = localStorage.getItem(BENGKEL_LOC_KEY);
     if (raw) return JSON.parse(raw);
   } catch {}
@@ -92,6 +110,18 @@ function getBengkelLocation(): BengkelLocation {
 
 function PengaturanIntegrasi() {
   const { user } = useAuth();
+  const isOwner = user?.role === "owner" || user?.role === "super_admin";
+  const { activeBengkel, activeBengkelId, updateBengkelInfo, refreshBengkel } = useStore();
+  const workshopId =
+    user?.bengkelId ||
+    user?.workshopId ||
+    activeBengkelId ||
+    activeBengkel?.id ||
+    "bengkel-2307";
+
+  useEffect(() => {
+    refreshBengkel?.();
+  }, [refreshBengkel]);
 
   // ── WhatsApp State ──────────────────────────────────────────────
   const [waEnabled, setWaEnabled] = useState(false);
@@ -108,8 +138,60 @@ function PengaturanIntegrasi() {
   const [showWaToken, setShowWaToken] = useState(false);
 
   // ── Maps State ──────────────────────────────────────────────────
-  const [bengkelLoc, setBengkelLoc] = useState<BengkelLocation>(getBengkelLocation());
+  const [bengkelLoc, setBengkelLoc] = useState<BengkelLocation>(DEMO_BENGKEL_LOCATION);
+  const [latInput, setLatInput] = useState<string>(String(DEMO_BENGKEL_LOCATION.lat));
+  const [lngInput, setLngInput] = useState<string>(String(DEMO_BENGKEL_LOCATION.lng));
   const [locEditing, setLocEditing] = useState(false);
+  const [savingLoc, setSavingLoc] = useState(false);
+  const [geocoding, setGeocoding] = useState(false);
+  const [searchAlamat, setSearchAlamat] = useState("");
+
+  // Load workshop location when component mounts or active workshop changes
+  useEffect(() => {
+    // 1. Prioritaskan activeBengkel dari database
+    if (activeBengkel && (activeBengkel.lat || activeBengkel.alamat)) {
+      const cleanAlamat = (activeBengkel.alamat || "").replace(/\[geo:[^\]]+\]/gi, "").trim();
+      const current: BengkelLocation = {
+        nama: activeBengkel.nama || DEMO_BENGKEL_LOCATION.nama,
+        alamat: cleanAlamat || DEMO_BENGKEL_LOCATION.alamat,
+        telepon: activeBengkel.telepon || DEMO_BENGKEL_LOCATION.telepon,
+        jamOperasional: activeBengkel.jamOperasional || DEMO_BENGKEL_LOCATION.jamOperasional,
+        lat: activeBengkel.lat ?? DEMO_BENGKEL_LOCATION.lat,
+        lng: activeBengkel.lng ?? DEMO_BENGKEL_LOCATION.lng,
+      };
+      setBengkelLoc(current);
+      setLatInput(String(current.lat));
+      setLngInput(String(current.lng));
+      return;
+    }
+
+    // 2. Cek localStorage spesifik workshop
+    const wsKey = `appbenk_bengkel_location_${workshopId}`;
+    const savedWs = localStorage.getItem(wsKey);
+    if (savedWs) {
+      try {
+        const parsed = JSON.parse(savedWs);
+        setBengkelLoc(parsed);
+        setLatInput(String(parsed.lat));
+        setLngInput(String(parsed.lng));
+        return;
+      } catch {}
+    }
+
+    // 3. Fallback: DEMO_BENGKEL_LOCATION
+    setBengkelLoc(DEMO_BENGKEL_LOCATION);
+    setLatInput(String(DEMO_BENGKEL_LOCATION.lat));
+    setLngInput(String(DEMO_BENGKEL_LOCATION.lng));
+  }, [
+    workshopId,
+    activeBengkel?.id,
+    activeBengkel?.nama,
+    activeBengkel?.alamat,
+    activeBengkel?.telepon,
+    activeBengkel?.lat,
+    activeBengkel?.lng,
+    activeBengkel?.jamOperasional,
+  ]);
 
   useEffect(() => {
     const cfg = getWAConfig();
@@ -125,402 +207,393 @@ function PengaturanIntegrasi() {
     }
   }, []);
 
-  // ── WhatsApp ────────────────────────────────────────────────────
+  // ── WhatsApp (Dinonaktifkan Sementara — Tahap Pengembangan) ──────
   const simpanWA = () => {
-    const cfg: WAConfig = {
-      enabled: waEnabled,
-      provider: waProvider,
-      token: waProvider === "twilio" ? waTwilioToken.trim() : waToken.trim(),
-      gatewayUrl: waGatewayUrl.trim() || undefined,
-      senderNumber: waSender.trim() ? formatNomorWA(waSender.trim()) : undefined,
-      twilioAccountSid: waTwilioSid.trim() || undefined,
-      twilioAuthToken: waTwilioToken.trim() || undefined,
-      twilioFrom: waTwilioFrom.trim() || undefined,
-    };
-    saveWAConfig(cfg);
-    toast.success("Konfigurasi WhatsApp berhasil disimpan!");
+    toast.info("Fitur WhatsApp Notifikasi sedang dalam tahap pengembangan dan belum dapat disimpan.");
   };
 
   const testWA = async () => {
-    if (!waTestNomor.trim()) {
-      toast.error("Masukkan nomor WhatsApp untuk test.");
-      return;
-    }
-    setWaTestLoading(true);
-    setWaTestResult(null);
-
-    try {
-      const nomorFormatted = formatNomorWA(waTestNomor.trim());
-      const pesan = `🧪 *Test Notifikasi AppBenk*\n\nHalo! Ini adalah pesan test dari sistem AppBenk.\n\nJika Anda menerima pesan ini, konfigurasi WhatsApp Gateway berhasil! ✅\n\n_AppBenk — Solusi Manajemen Bengkel_`;
-
-      const { kirimNotifikasiWA } = await import("@/lib/whatsapp");
-
-      // Simpan config dulu
-      saveWAConfig({
-        enabled: waEnabled,
-        provider: waProvider,
-        token: waProvider === "twilio" ? waTwilioToken.trim() : waToken.trim(),
-        gatewayUrl: waGatewayUrl.trim() || undefined,
-        senderNumber: waSender.trim() ? formatNomorWA(waSender.trim()) : undefined,
-        twilioAccountSid: waTwilioSid.trim() || undefined,
-        twilioAuthToken: waTwilioToken.trim() || undefined,
-        twilioFrom: waTwilioFrom.trim() || undefined,
-      });
-
-      const result = await kirimNotifikasiWA(nomorFormatted, pesan, {
-        openManualIfNoConfig: true,
-      });
-
-      if (result.ok) {
-        if (result.manual) {
-          setWaTestResult({ ok: true, msg: "WhatsApp dibuka di tab baru (mode manual)." });
-        } else {
-          setWaTestResult({ ok: true, msg: "Pesan test berhasil dikirim!" });
-          toast.success("Pesan WhatsApp test berhasil dikirim!");
-        }
-      } else {
-        setWaTestResult({ ok: false, msg: result.error || "Gagal mengirim pesan." });
-        toast.error("Gagal kirim pesan test: " + result.error);
-      }
-    } catch (e) {
-      setWaTestResult({ ok: false, msg: String(e) });
-    }
-
-    setWaTestLoading(false);
+    toast.info("Fitur WhatsApp Notifikasi sedang dalam tahap pengembangan.");
   };
 
-  // ── Maps ────────────────────────────────────────────────────────
-  const simpanLokasi = () => {
-    saveBengkelLocation(bengkelLoc);
+  // ── Maps Handlers ────────────────────────────────────────────────
+  const handleMapLocationChange = (lat: number, lng: number) => {
+    if (!isOwner) {
+      toast.error("Hanya Owner bengkel yang memiliki izin untuk memindahkan titik lokasi peta.");
+      return;
+    }
+    setBengkelLoc((prev) => ({ ...prev, lat, lng }));
+    setLatInput(lat.toFixed(6));
+    setLngInput(lng.toFixed(6));
+  };
+
+  const handleLatChange = (val: string) => {
+    if (!isOwner) return;
+    setLatInput(val);
+    const parsed = parseCoordinate(val);
+    if (parsed !== 0 && parsed >= -90 && parsed <= 90) {
+      setBengkelLoc((prev) => ({ ...prev, lat: parsed }));
+    }
+  };
+
+  const handleLngChange = (val: string) => {
+    if (!isOwner) return;
+    setLngInput(val);
+    const parsed = parseCoordinate(val);
+    if (parsed !== 0 && parsed >= -180 && parsed <= 180) {
+      setBengkelLoc((prev) => ({ ...prev, lng: parsed }));
+    }
+  };
+
+  const cariAlamatDiPeta = async () => {
+    if (!isOwner) {
+      toast.error("Hanya Owner bengkel yang memiliki izin untuk mencari dan mengubah titik lokasi.");
+      return;
+    }
+    const query = searchAlamat.trim() || bengkelLoc.alamat.trim();
+    if (!query) {
+      toast.error("Ketik nama alamat atau kota untuk mencari lokasi.");
+      return;
+    }
+    setGeocoding(true);
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`,
+        {
+          headers: {
+            "Accept-Language": "id,en",
+          },
+        },
+      );
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        const item = data[0];
+        const newLat = parseFloat(item.lat);
+        const newLng = parseFloat(item.lon);
+        setBengkelLoc((prev) => ({ ...prev, lat: newLat, lng: newLng }));
+        setLatInput(newLat.toFixed(6));
+        setLngInput(newLng.toFixed(6));
+        toast.success(`Titik lokasi ditemukan: ${item.display_name.split(",")[0]}`);
+      } else {
+        toast.error("Lokasi tidak ditemukan. Coba ketik nama kota atau kecamatan.");
+      }
+    } catch {
+      toast.error("Gagal mencari lokasi. Pastikan koneksi internet aktif.");
+    } finally {
+      setGeocoding(false);
+    }
+  };
+
+  const simpanLokasi = async () => {
+    if (!isOwner) {
+      toast.error("Akses ditolak: Hanya Owner bengkel yang berhak menyimpan perubahan lokasi dan profil bengkel.");
+      return;
+    }
+    const finalLat = parseCoordinate(latInput);
+    const finalLng = parseCoordinate(lngInput);
+
+    if (isNaN(finalLat) || isNaN(finalLng) || (finalLat === 0 && finalLng === 0)) {
+      toast.error("Silakan tentukan koordinat lokasi bengkel di peta.");
+      return;
+    }
+
+    if (finalLat < -90 || finalLat > 90 || finalLng < -180 || finalLng > 180) {
+      toast.error("Koordinat tidak valid. Latitude harus antara -90 s/d 90, Longitude -180 s/d 180.");
+      return;
+    }
+
+    setSavingLoc(true);
+    try {
+      const locData: BengkelLocation = {
+        nama: bengkelLoc.nama.trim() || activeBengkel?.nama || "Bengkel",
+        alamat: bengkelLoc.alamat.trim() || activeBengkel?.alamat || "",
+        telepon: bengkelLoc.telepon?.trim() || activeBengkel?.telepon || "",
+        jamOperasional: bengkelLoc.jamOperasional?.trim() || "Senin–Sabtu: 08.00–17.00 WIB",
+        lat: finalLat,
+        lng: finalLng,
+      };
+
+      // 1. Simpan ke localStorage spesifik workshop
+      localStorage.setItem(`appbenk_bengkel_location_${workshopId}`, JSON.stringify(locData));
+      // 2. Simpan ke localStorage global untuk fallback
+      localStorage.setItem("appbenk_bengkel_location", JSON.stringify(locData));
+      localStorage.setItem("appbenk_bengkel_location_bengkel-2307", JSON.stringify(locData));
+
+      // 3. Update data bengkel di useStore dan Supabase
+      await updateBengkelInfo(workshopId, {
+        nama: locData.nama,
+        alamat: locData.alamat,
+        telepon: locData.telepon,
+        lat: locData.lat,
+        lng: locData.lng,
+        jamOperasional: locData.jamOperasional,
+      });
+
+      // 4. Update state lokal
+      setBengkelLoc(locData);
+      setLatInput(String(locData.lat));
+      setLngInput(String(locData.lng));
+      setLocEditing(false);
+
+      // 5. Broadcast custom event
+      window.dispatchEvent(
+        new CustomEvent("appbenk_bengkel_location_updated", {
+          detail: { workshopId, location: locData },
+        }),
+      );
+
+      toast.success("Lokasi bengkel dan informasi berhasil disimpan!");
+    } catch (err) {
+      console.error("Gagal simpan lokasi:", err);
+      toast.error("Gagal menyimpan lokasi bengkel.");
+    } finally {
+      setSavingLoc(false);
+    }
+  };
+
+  const batalEditLokasi = () => {
+    const wsKey = `appbenk_bengkel_location_${workshopId}`;
+    const savedWs = localStorage.getItem(wsKey) || localStorage.getItem("appbenk_bengkel_location");
+    if (savedWs) {
+      try {
+        const parsed = JSON.parse(savedWs);
+        setBengkelLoc(parsed);
+        setLatInput(String(parsed.lat));
+        setLngInput(String(parsed.lng));
+        setLocEditing(false);
+        return;
+      } catch {}
+    }
+    const fallback: BengkelLocation = {
+      nama: activeBengkel?.nama || DEMO_BENGKEL_LOCATION.nama,
+      alamat: activeBengkel?.alamat || DEMO_BENGKEL_LOCATION.alamat,
+      telepon: activeBengkel?.telepon || DEMO_BENGKEL_LOCATION.telepon,
+      jamOperasional: DEMO_BENGKEL_LOCATION.jamOperasional,
+      lat: DEMO_BENGKEL_LOCATION.lat,
+      lng: DEMO_BENGKEL_LOCATION.lng,
+    };
+    setBengkelLoc(fallback);
+    setLatInput(String(fallback.lat));
+    setLngInput(String(fallback.lng));
     setLocEditing(false);
-    toast.success("Lokasi bengkel berhasil disimpan!");
   };
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-4 lg:p-6">
       <PageHeader
-        title="Pengaturan Integrasi"
-        description="Konfigurasi WhatsApp, Email, dan Lokasi Bengkel untuk AppBenk"
+        title={isOwner ? "Pengaturan Bengkel & Integrasi" : "Pengaturan Integrasi"}
+        description={
+          isOwner
+            ? "Kelola profil bengkel, titik koordinat peta, dan konfigurasi integrasi sistem"
+            : "Konfigurasi WhatsApp, Email, dan informasi sistem untuk AppBenk"
+        }
       />
 
       <Tabs defaultValue="whatsapp">
-        <TabsList className="grid w-full grid-cols-2 md:grid-cols-4">
+        <TabsList className={cn("grid w-full", isOwner ? "grid-cols-2 md:grid-cols-4" : "grid-cols-3")}>
           <TabsTrigger value="whatsapp" className="gap-1.5">
             <MessageSquare className="h-4 w-4" />
-            WhatsApp
+            <span>WhatsApp</span>
+            <span className="rounded-full border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700 dark:text-amber-400">
+              Tahap Pengembangan
+            </span>
           </TabsTrigger>
           <TabsTrigger value="email" className="gap-1.5">
             <Mail className="h-4 w-4" />
             Email
           </TabsTrigger>
-          <TabsTrigger value="maps" className="gap-1.5">
-            <MapPin className="h-4 w-4" />
-            Lokasi Bengkel
-          </TabsTrigger>
+          {isOwner && (
+            <TabsTrigger value="maps" className="gap-1.5">
+              <MapPin className="h-4 w-4" />
+              Lokasi Bengkel
+            </TabsTrigger>
+          )}
           <TabsTrigger value="pembayaran" className="gap-1.5">
             <Wallet className="h-4 w-4" />
             Pembayaran
           </TabsTrigger>
         </TabsList>
 
-        {/* ── TAB WHATSAPP ──────────────────────────────────────── */}
+        {/* ── TAB WHATSAPP (DINONAKTIFKAN — TAHAP PENGEMBANGAN) ── */}
         <TabsContent value="whatsapp" className="mt-4 space-y-4">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="flex items-center gap-2">
-                    <MessageSquare className="h-5 w-5 text-green-600" />
-                    WhatsApp Reminder & Notifikasi
-                  </CardTitle>
-                  <CardDescription className="mt-1">
-                    Kirim otomatis notifikasi booking, status servis, tagihan, dan reminder berkala
-                    ke pelanggan via WhatsApp.
-                  </CardDescription>
-                </div>
-                <div className="flex items-center gap-2">
-                  {waEnabled ? (
-                    <Badge className="bg-green-100 text-green-700">
-                      <Wifi className="mr-1 h-3 w-3" />
-                      Aktif
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary" className="text-muted-foreground">
-                      <WifiOff className="mr-1 h-3 w-3" />
-                      Nonaktif
-                    </Badge>
-                  )}
-                </div>
+          {/* BANNER INFORMASI TAHAP PENGEMBANGAN */}
+          <div className="rounded-xl border border-amber-300/80 bg-gradient-to-r from-amber-50 via-orange-50/60 to-amber-50 p-5 shadow-sm dark:border-amber-900/60 dark:from-amber-950/40 dark:via-orange-950/20 dark:to-amber-950/30">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+              <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 border border-amber-500/25 text-amber-600 dark:text-amber-400">
+                <Construction className="size-6" />
               </div>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              {/* Enable toggle */}
-              <div className="flex items-center justify-between rounded-lg border p-3">
-                <div>
-                  <p className="font-medium text-sm">Aktifkan WhatsApp Notifikasi</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Kirim notifikasi otomatis ke pelanggan saat ada update servis
+              <div className="space-y-1.5 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-semibold text-sm sm:text-base text-foreground">
+                    Fitur WhatsApp Notifikasi Sedang Dalam Tahap Pengembangan
+                  </h3>
+                  <Badge variant="outline" className="border-amber-400 bg-amber-100/90 text-amber-800 text-[10px] font-semibold dark:border-amber-800 dark:bg-amber-950/80 dark:text-amber-300">
+                    <Clock className="mr-1 size-3" /> Segera Hadir
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Fitur otomatisasi pesan WhatsApp pengingat servis dan tagihan ke pelanggan saat ini belum dapat digunakan dan sedang disiapkan oleh tim developer. Nantikan pembaruan sistem berikutnya.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* FORM WHATSAPP (PREVIEW TERKUNCI DENGAN OVERLAY & SEMUA FIELD DISABLED) */}
+          <div className="relative">
+            {/* Backdrop Blur Overlay */}
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-lg bg-background/55 backdrop-blur-[2px] p-6 text-center select-none pointer-events-none">
+              <div className="rounded-full bg-background/95 p-3.5 shadow-md border border-amber-200/80 dark:border-amber-900/60 mb-2.5">
+                <Lock className="size-6 text-amber-600 dark:text-amber-400" />
+              </div>
+              <p className="font-semibold text-sm text-foreground">Pengaturan WhatsApp Dinonaktifkan</p>
+              <p className="text-xs text-muted-foreground max-w-md mt-1">
+                Semua input dan tombol integrasi dikunci sementara agar tidak mengganggu transaksi operasional bengkel Anda.
+              </p>
+            </div>
+
+            <Card className="opacity-60 pointer-events-none select-none">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <MessageSquare className="h-5 w-5 text-muted-foreground" />
+                      WhatsApp Reminder & Notifikasi
+                    </CardTitle>
+                    <CardDescription className="mt-1">
+                      Kirim otomatis notifikasi booking, status servis, tagihan, dan reminder berkala
+                      ke pelanggan via WhatsApp.
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                      <Lock className="mr-1 h-3 w-3" />
+                      Terkunci
+                    </Badge>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {/* Enable toggle (Disabled) */}
+                <div className="flex items-center justify-between rounded-lg border p-3 bg-muted/20">
+                  <div>
+                    <p className="font-medium text-sm">Aktifkan WhatsApp Notifikasi</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Kirim notifikasi otomatis ke pelanggan saat ada update servis
+                    </p>
+                  </div>
+                  <Switch
+                    id="wa-enabled"
+                    checked={false}
+                    disabled={true}
+                  />
+                </div>
+
+                {/* Provider selection (Disabled) */}
+                <div className="space-y-2">
+                  <Label>Provider / Gateway WhatsApp</Label>
+                  <Select value={waProvider} disabled={true}>
+                    <SelectTrigger disabled>
+                      <SelectValue placeholder="Twilio WhatsApp — Official Meta/Twilio Business Cloud API" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="twilio">Twilio WhatsApp</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Twilio Configuration Fields (Disabled) */}
+                <div className="space-y-2">
+                  <Label htmlFor="wa-twilio-sid">Twilio Account SID</Label>
+                  <Input
+                    id="wa-twilio-sid"
+                    placeholder="AC_sample_twilio_account_sid"
+                    value={waTwilioSid}
+                    disabled={true}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Temukan Account SID di Twilio Console
                   </p>
                 </div>
-                <Switch
-                  id="wa-enabled"
-                  checked={waEnabled}
-                  onCheckedChange={setWaEnabled}
-                />
-              </div>
 
-              {/* Provider selection */}
-              <div className="space-y-2">
-                <Label>Provider / Gateway WhatsApp</Label>
-                <Select value={waProvider} onValueChange={(v) => setWaProvider(v as WAProvider)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="twilio">
-                      <span className="flex flex-col">
-                        <span className="font-medium">Twilio WhatsApp</span>
-                        <span className="text-xs text-muted-foreground">twilio.com — Official Meta/Twilio Business Cloud API</span>
-                      </span>
-                    </SelectItem>
-                    <SelectItem value="wablas">
-                      <span className="flex flex-col">
-                        <span className="font-medium">Wablas</span>
-                        <span className="text-xs text-muted-foreground">wablas.com — Populer, mudah setup</span>
-                      </span>
-                    </SelectItem>
-                    <SelectItem value="fonnte">
-                      <span className="flex flex-col">
-                        <span className="font-medium">Fonnte</span>
-                        <span className="text-xs text-muted-foreground">fonnte.com — Gratis 250 pesan/bulan</span>
-                      </span>
-                    </SelectItem>
-                    <SelectItem value="manual">
-                      <span className="flex flex-col">
-                        <span className="font-medium">Manual (wa.me link)</span>
-                        <span className="text-xs text-muted-foreground">Buka WhatsApp Web dengan pesan terisi otomatis</span>
-                      </span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Twilio Configuration Fields */}
-              {waProvider === "twilio" && (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="wa-twilio-sid">Twilio Account SID</Label>
-                    <Input
-                      id="wa-twilio-sid"
-                      placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                      value={waTwilioSid}
-                      onChange={(e) => setWaTwilioSid(e.target.value)}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Temukan Account SID di{" "}
-                      <a
-                        href="https://console.twilio.com"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary underline inline-flex items-center gap-0.5"
-                      >
-                        Twilio Console <ExternalLink className="h-3 w-3" />
-                      </a>
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="wa-twilio-token">Twilio Auth Token</Label>
-                    <div className="relative">
-                      <Input
-                        id="wa-twilio-token"
-                        type={showWaToken ? "text" : "password"}
-                        placeholder="Masukkan Auth Token Twilio Anda"
-                        value={waTwilioToken}
-                        onChange={(e) => setWaTwilioToken(e.target.value)}
-                        className="pr-10"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowWaToken(!showWaToken)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        {showWaToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="wa-twilio-from">Nomor Pengirim Twilio WhatsApp (From)</Label>
-                    <div className="relative">
-                      <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        id="wa-twilio-from"
-                        placeholder="whatsapp:+14155238886"
-                        value={waTwilioFrom}
-                        onChange={(e) => setWaTwilioFrom(e.target.value)}
-                        className="pl-9"
-                      />
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Contoh untuk Twilio Sandbox: <span className="font-mono">whatsapp:+14155238886</span>
-                    </p>
-                  </div>
-                </>
-              )}
-
-              {/* Token/API Key for Wablas & Fonnte */}
-              {(waProvider === "wablas" || waProvider === "fonnte") && (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="wa-token">
-                      {waProvider === "wablas" ? "Token Wablas" : "Token Fonnte"}
-                    </Label>
-                    <div className="relative">
-                      <Input
-                        id="wa-token"
-                        type={showWaToken ? "text" : "password"}
-                        placeholder={`Masukkan token dari dashboard ${waProvider}`}
-                        value={waToken}
-                        onChange={(e) => setWaToken(e.target.value)}
-                        className="pr-10"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowWaToken(!showWaToken)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        {showWaToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Dapatkan token dari{" "}
-                      <a
-                        href={waProvider === "wablas" ? "https://wablas.com" : "https://fonnte.com"}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary underline inline-flex items-center gap-0.5"
-                      >
-                        {waProvider === "wablas" ? "wablas.com" : "fonnte.com"}
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                    </p>
-                  </div>
-
-                  {waProvider === "wablas" && (
-                    <div className="space-y-2">
-                      <Label htmlFor="wa-gateway-url">Gateway URL Wablas (opsional)</Label>
-                      <Input
-                        id="wa-gateway-url"
-                        placeholder="https://jogja.wablas.com/api/send-message"
-                        value={waGatewayUrl}
-                        onChange={(e) => setWaGatewayUrl(e.target.value)}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Biarkan kosong untuk menggunakan URL default Wablas
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    <Label htmlFor="wa-sender">Nomor WA Pengirim (opsional)</Label>
-                    <div className="relative">
-                      <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        id="wa-sender"
-                        placeholder="08xxxxxxxxxx"
-                        value={waSender}
-                        onChange={(e) => setWaSender(e.target.value)}
-                        className="pl-9"
-                      />
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {/* Manual mode info */}
-              {waProvider === "manual" && (
-                <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 text-sm text-blue-800">
-                  <p className="font-medium">Mode Manual:</p>
-                  <p className="mt-1 text-xs">
-                    Saat ada event (booking, status update, tagihan), tombol akan muncul untuk membuka
-                    WhatsApp Web dengan pesan yang sudah terisi otomatis. Admin cukup klik Send.
-                  </p>
+                <div className="space-y-2">
+                  <Label htmlFor="wa-twilio-token">Twilio Auth Token</Label>
+                  <Input
+                    id="wa-twilio-token"
+                    type="password"
+                    value="••••••••••••••••••••••••••••"
+                    disabled={true}
+                  />
                 </div>
-              )}
 
-              <Separator />
-
-              {/* Test kirim */}
-              <div className="space-y-3">
-                <Label>Test Kirim Pesan</Label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
+                <div className="space-y-2">
+                  <Label htmlFor="wa-twilio-from">Nomor Pengirim Twilio WhatsApp (From)</Label>
+                  <div className="relative">
                     <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
-                      placeholder="Nomor WA tujuan test (08xxxxxxxxxx)"
-                      value={waTestNomor}
-                      onChange={(e) => setWaTestNomor(e.target.value)}
+                      id="wa-twilio-from"
+                      placeholder="whatsapp:+14155238886"
+                      value={waTwilioFrom}
+                      disabled={true}
                       className="pl-9"
                     />
                   </div>
-                  <Button
-                    variant="outline"
-                    onClick={testWA}
-                    disabled={waTestLoading}
-                    className="gap-1.5 shrink-0"
-                  >
-                    {waTestLoading ? (
-                      <RefreshCw className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <TestTube className="h-4 w-4" />
-                    )}
-                    Kirim Test
-                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    Contoh untuk Twilio Sandbox: <span className="font-mono">whatsapp:+14155238886</span>
+                  </p>
                 </div>
-                {waTestResult && (
-                  <div
-                    className={`flex items-start gap-2 rounded-lg p-3 text-sm ${
-                      waTestResult.ok
-                        ? "bg-green-50 border border-green-200 text-green-800"
-                        : "bg-red-50 border border-red-200 text-red-800"
-                    }`}
-                  >
-                    {waTestResult.ok ? (
-                      <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
-                    ) : (
-                      <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                    )}
-                    {waTestResult.msg}
-                  </div>
-                )}
-              </div>
 
-              {/* Notifikasi yang dikirim otomatis */}
-              <div className="rounded-lg bg-muted/50 p-4 space-y-2">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  Notifikasi Otomatis
-                </p>
-                {[
-                  { icon: "📅", text: "Konfirmasi Booking — saat admin konfirmasi booking pelanggan" },
-                  { icon: "🔧", text: "Servis Dimulai — saat status berubah ke 'Diproses'" },
-                  { icon: "✅", text: "Servis Selesai — saat status berubah ke 'Selesai'" },
-                  { icon: "💰", text: "Tagihan Siap — saat status 'Menunggu Pembayaran'" },
-                  { icon: "🎉", text: "Pembayaran Diterima — setelah pembayaran terverifikasi" },
-                ].map((item, i) => (
-                  <div key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
-                    <span className="shrink-0">{item.icon}</span>
-                    <span>{item.text}</span>
-                  </div>
-                ))}
-              </div>
+                <Separator />
 
-              <Button onClick={simpanWA} className="w-full gap-1.5">
-                <Save className="h-4 w-4" />
-                Simpan Konfigurasi WhatsApp
-              </Button>
-            </CardContent>
-          </Card>
+                {/* Test kirim (Disabled) */}
+                <div className="space-y-3">
+                  <Label>Test Kirim Pesan</Label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Nomor WA tujuan test (08xxxxxxxxxx)"
+                        value={waTestNomor}
+                        disabled={true}
+                        className="pl-9"
+                      />
+                    </div>
+                    <Button
+                      variant="outline"
+                      disabled={true}
+                      className="gap-1.5 shrink-0"
+                    >
+                      <TestTube className="h-4 w-4" />
+                      Kirim Test
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Notifikasi yang dikirim otomatis */}
+                <div className="rounded-lg bg-muted/40 p-4 space-y-2">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Rencana Notifikasi Otomatis
+                  </p>
+                  {[
+                    { icon: "📅", text: "Konfirmasi Booking — saat admin konfirmasi booking pelanggan" },
+                    { icon: "🔧", text: "Servis Dimulai — saat status berubah ke 'Diproses'" },
+                    { icon: "✅", text: "Servis Selesai — saat status berubah ke 'Selesai'" },
+                    { icon: "💰", text: "Tagihan Siap — saat status 'Menunggu Pembayaran'" },
+                    { icon: "🎉", text: "Pembayaran Diterima — setelah pembayaran terverifikasi" },
+                  ].map((item, i) => (
+                    <div key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
+                      <span className="shrink-0">{item.icon}</span>
+                      <span>{item.text}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <Button disabled={true} className="w-full gap-1.5 opacity-60 cursor-not-allowed">
+                  <Lock className="h-4 w-4" />
+                  Konfigurasi Dinonaktifkan (Tahap Pengembangan)
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         {/* ── TAB EMAIL ─────────────────────────────────────────── */}
@@ -695,148 +768,204 @@ function PengaturanIntegrasi() {
           </Card>
         </TabsContent>
 
-        {/* ── TAB MAPS ──────────────────────────────────────────── */}
-        <TabsContent value="maps" className="mt-4 space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <MapPin className="h-5 w-5 text-red-500" />
-                Lokasi Bengkel di Peta
-              </CardTitle>
-              <CardDescription>
-                Atur koordinat dan informasi lokasi bengkel yang akan ditampilkan kepada pelanggan
-                saat booking servis.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              {/* Preview peta */}
-              <BengkelMap bengkel={bengkelLoc} height={250} />
-
-              {/* Form edit lokasi */}
-              {locEditing ? (
-                <div className="space-y-4 rounded-lg border p-4 bg-muted/20">
-                  <p className="font-medium text-sm">Edit Informasi Bengkel:</p>
-
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="loc-nama">Nama Bengkel</Label>
-                      <Input
-                        id="loc-nama"
-                        value={bengkelLoc.nama}
-                        onChange={(e) => setBengkelLoc({ ...bengkelLoc, nama: e.target.value })}
-                        placeholder="Nama Bengkel Anda"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="loc-telepon">Telepon</Label>
-                      <Input
-                        id="loc-telepon"
-                        value={bengkelLoc.telepon || ""}
-                        onChange={(e) => setBengkelLoc({ ...bengkelLoc, telepon: e.target.value })}
-                        placeholder="0274-xxxxxx"
-                      />
-                    </div>
-                    <div className="space-y-1.5 sm:col-span-2">
-                      <Label htmlFor="loc-alamat">Alamat Lengkap</Label>
-                      <Input
-                        id="loc-alamat"
-                        value={bengkelLoc.alamat}
-                        onChange={(e) => setBengkelLoc({ ...bengkelLoc, alamat: e.target.value })}
-                        placeholder="Jl. Nama Jalan No. X, Kecamatan, Kota"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="loc-lat">Latitude</Label>
-                      <Input
-                        id="loc-lat"
-                        type="number"
-                        step="0.0001"
-                        value={bengkelLoc.lat}
-                        onChange={(e) => setBengkelLoc({ ...bengkelLoc, lat: parseFloat(e.target.value) || 0 })}
-                        placeholder="-7.7516"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="loc-lng">Longitude</Label>
-                      <Input
-                        id="loc-lng"
-                        type="number"
-                        step="0.0001"
-                        value={bengkelLoc.lng}
-                        onChange={(e) => setBengkelLoc({ ...bengkelLoc, lng: parseFloat(e.target.value) || 0 })}
-                        placeholder="110.3761"
-                      />
-                    </div>
-                    <div className="space-y-1.5 sm:col-span-2">
-                      <Label htmlFor="loc-jam">Jam Operasional</Label>
-                      <Input
-                        id="loc-jam"
-                        value={bengkelLoc.jamOperasional || ""}
-                        onChange={(e) => setBengkelLoc({ ...bengkelLoc, jamOperasional: e.target.value })}
-                        placeholder="Senin–Sabtu: 08.00–17.00 WIB"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Panduan cari koordinat */}
-                  <div className="rounded-lg bg-blue-50 border border-blue-100 p-3 text-xs text-blue-800 space-y-1.5">
-                    <p className="font-semibold">Cara mendapatkan koordinat bengkel:</p>
-                    <ol className="list-decimal list-inside space-y-1">
-                      <li>Buka Google Maps dan cari lokasi bengkel Anda</li>
-                      <li>Klik kanan pada titik lokasi bengkel</li>
-                      <li>Angka pertama = Latitude, angka kedua = Longitude</li>
-                      <li>
-                        <a
-                          href="https://www.google.com/maps"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="underline inline-flex items-center gap-0.5"
-                        >
-                          Buka Google Maps <ExternalLink className="h-3 w-3" />
-                        </a>
-                      </li>
-                    </ol>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button onClick={simpanLokasi} className="flex-1 gap-1.5">
-                      <Save className="h-4 w-4" />
-                      Simpan Lokasi
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        setBengkelLoc(getBengkelLocation());
-                        setLocEditing(false);
-                      }}
-                      className="flex-1"
-                    >
-                      Batal
-                    </Button>
-                  </div>
+        {/* ── TAB MAPS (KHUSUS OWNER) ────────────────────────────── */}
+        {isOwner && (
+          <TabsContent value="maps" className="mt-4 space-y-4">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    <MapPin className="h-5 w-5 text-red-500" />
+                    Lokasi Bengkel di Peta
+                  </CardTitle>
+                  <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 flex items-center gap-1 font-medium">
+                    <Crown className="h-3 w-3 text-amber-600" /> Akses Owner
+                  </Badge>
                 </div>
-              ) : (
-                <Button
-                  variant="outline"
-                  onClick={() => setLocEditing(true)}
-                  className="w-full gap-1.5"
-                >
-                  <MapPin className="h-4 w-4" />
-                  Edit Lokasi Bengkel
-                </Button>
-              )}
+                <CardDescription>
+                  Atur koordinat dan informasi lokasi bengkel yang akan ditampilkan kepada pelanggan
+                  saat booking servis.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {/* Interactive Bengkel Map */}
+                <BengkelMap
+                  bengkel={bengkelLoc}
+                  height={320}
+                  editable={locEditing}
+                  onLocationChange={handleMapLocationChange}
+                />
 
-              {/* Info */}
-              <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground space-y-1">
-                <p className="font-medium">Peta menggunakan OpenStreetMap:</p>
-                <p>✅ Gratis tanpa API key</p>
-                <p>✅ Data peta terus diperbarui oleh komunitas</p>
-                <p>✅ Tombol petunjuk arah Google Maps & Waze tersedia</p>
-                <p>✅ Deteksi lokasi pelanggan + estimasi jarak</p>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+                {/* Form edit lokasi */}
+                {locEditing ? (
+                  <div className="space-y-4 rounded-lg border p-4 bg-muted/20">
+                    <div className="flex items-center justify-between">
+                      <p className="font-semibold text-sm flex items-center gap-1.5 text-foreground">
+                        <MapPin className="h-4 w-4 text-blue-600" />
+                        Edit Informasi & Koordinat Bengkel
+                      </p>
+                      <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                        Mode Edit Interaktif
+                      </Badge>
+                    </div>
+
+                    {/* Pencarian alamat cepat di peta */}
+                    <div className="rounded-lg border bg-background p-3 space-y-2">
+                      <Label htmlFor="search-map-address" className="text-xs font-medium text-muted-foreground">
+                        Cari Alamat / Kota di Peta (Otomatis geser pin):
+                      </Label>
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                          <Input
+                            id="search-map-address"
+                            value={searchAlamat}
+                            onChange={(e) => setSearchAlamat(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                cariAlamatDiPeta();
+                              }
+                            }}
+                            placeholder="Contoh: Jl. Merdeka Rembang, Jawa Tengah"
+                            className="pl-8 text-xs h-9"
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          onClick={cariAlamatDiPeta}
+                          disabled={geocoding}
+                          className="gap-1 text-xs shrink-0 h-9"
+                        >
+                          {geocoding ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Search className="h-3.5 w-3.5" />
+                          )}
+                          Cari Titik
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="loc-nama">Nama Bengkel</Label>
+                        <Input
+                          id="loc-nama"
+                          value={bengkelLoc.nama}
+                          onChange={(e) => setBengkelLoc({ ...bengkelLoc, nama: e.target.value })}
+                          placeholder="Nama Bengkel Anda"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="loc-telepon">Telepon / WhatsApp</Label>
+                        <Input
+                          id="loc-telepon"
+                          value={bengkelLoc.telepon || ""}
+                          onChange={(e) => setBengkelLoc({ ...bengkelLoc, telepon: e.target.value })}
+                          placeholder="081234567890"
+                        />
+                      </div>
+                      <div className="space-y-1.5 sm:col-span-2">
+                        <Label htmlFor="loc-alamat">Alamat Lengkap</Label>
+                        <Input
+                          id="loc-alamat"
+                          value={bengkelLoc.alamat}
+                          onChange={(e) => setBengkelLoc({ ...bengkelLoc, alamat: e.target.value })}
+                          placeholder="Jl. Nama Jalan No. X, Kecamatan, Kota"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="loc-lat">Latitude</Label>
+                        <Input
+                          id="loc-lat"
+                          type="text"
+                          inputMode="decimal"
+                          value={latInput}
+                          onChange={(e) => handleLatChange(e.target.value)}
+                          placeholder="-7.751600"
+                          className="font-mono text-sm"
+                        />
+                        <p className="text-[11px] text-muted-foreground">
+                          Geser pin di peta atau masukkan angka desimal
+                        </p>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="loc-lng">Longitude</Label>
+                        <Input
+                          id="loc-lng"
+                          type="text"
+                          inputMode="decimal"
+                          value={lngInput}
+                          onChange={(e) => handleLngChange(e.target.value)}
+                          placeholder="110.376100"
+                          className="font-mono text-sm"
+                        />
+                        <p className="text-[11px] text-muted-foreground">
+                          Mendukung titik desimal maupun koma
+                        </p>
+                      </div>
+                      <div className="space-y-1.5 sm:col-span-2">
+                        <Label htmlFor="loc-jam">Jam Operasional</Label>
+                        <Input
+                          id="loc-jam"
+                          value={bengkelLoc.jamOperasional || ""}
+                          onChange={(e) => setBengkelLoc({ ...bengkelLoc, jamOperasional: e.target.value })}
+                          placeholder="Senin–Sabtu: 08.00–17.00 WIB"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Panduan interaktif */}
+                    <div className="rounded-lg bg-blue-50 border border-blue-100 p-3 text-xs text-blue-800 space-y-1">
+                      <p className="font-semibold flex items-center gap-1">
+                        💡 Cara Mengatur Posisi di Peta:
+                      </p>
+                      <p>• Klik langsung di mana saja pada peta untuk menaruh pin bengkel.</p>
+                      <p>• Atau geser pin ikon kunci inggris 🔧 untuk memposisikan secara presisi.</p>
+                      <p>• Anda juga dapat menyalin koordinat dari Google Maps dan menempelkannya di kotak Latitude & Longitude di atas.</p>
+                    </div>
+
+                    <div className="flex gap-2 pt-1">
+                      <Button onClick={simpanLokasi} disabled={savingLoc} className="flex-1 gap-1.5">
+                        {savingLoc ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        Simpan Lokasi Bengkel
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={batalEditLokasi}
+                        disabled={savingLoc}
+                        className="flex-1"
+                      >
+                        Batal
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    onClick={() => setLocEditing(true)}
+                    className="w-full gap-1.5"
+                  >
+                    <MapPin className="h-4 w-4 text-blue-600" />
+                    Edit Lokasi Bengkel & Koordinat Peta
+                  </Button>
+                )}
+
+                {/* Info */}
+                <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground space-y-1">
+                  <p className="font-medium">Peta menggunakan OpenStreetMap:</p>
+                  <p>✅ Gratis tanpa API key</p>
+                  <p>✅ Data peta terus diperbarui oleh komunitas</p>
+                  <p>✅ Tombol petunjuk arah Google Maps & Waze tersedia</p>
+                  <p>✅ Deteksi lokasi pelanggan + estimasi jarak</p>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
 
         {/* ── TAB PEMBAYARAN BENGKEL ──────────────────────────────── */}
         <TabsContent value="pembayaran" className="mt-4 space-y-6">
@@ -874,13 +1003,6 @@ function PengaturanPembayaranBengkel() {
   const qrisAccount =
     qrisCandidates.find((a) => Boolean(a.qr_image_url)) ||
     qrisCandidates[0] ||
-    workshopPaymentAccounts
-      .filter((a) => a.account_type === "qris")
-      .sort((a, b) => {
-        const tb = new Date(b.updated_at || b.created_at || 0).getTime();
-        const ta = new Date(a.updated_at || a.created_at || 0).getTime();
-        return tb - ta;
-      })[0] ||
     null;
 
   // Form State Bank Transfer
@@ -906,9 +1028,8 @@ function PengaturanPembayaranBengkel() {
       try {
         const wsRaw = localStorage.getItem(`appbenk_qris_active_${workshopId}`);
         const wsImg = localStorage.getItem(`appbenk_qris_image_data_${workshopId}`);
-        const raw = wsRaw || localStorage.getItem("appbenk_qris_active");
-        if (raw) {
-          const parsed = JSON.parse(raw);
+        if (wsRaw) {
+          const parsed = JSON.parse(wsRaw);
           const parsedTime = new Date(parsed.updated_at || parsed.created_at || 0).getTime();
           if (parsedTime >= savedTimestamp) {
             if (parsed.qr_image_url) {
@@ -920,9 +1041,8 @@ function PengaturanPembayaranBengkel() {
             savedTimestamp = parsedTime;
           }
         }
-        const rawImg = wsImg || localStorage.getItem("appbenk_qris_image_data");
-        if (rawImg && !savedQrisImage) {
-          savedQrisImage = rawImg;
+        if (wsImg && !savedQrisImage) {
+          savedQrisImage = wsImg;
         }
       } catch {}
     }
@@ -932,6 +1052,25 @@ function PengaturanPembayaranBengkel() {
     }
     setQrisIsActive(savedQrisActive);
   }, [qrisAccount, workshopId]);
+
+  useEffect(() => {
+    if (!workshopId) return;
+    let isCancelled = false;
+    fetch(`/api/workshop/qris?id_bengkel=${encodeURIComponent(workshopId)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!isCancelled && data?.ok && data?.qris_url) {
+          setQrisPreview((prev) => (prev && !prev.startsWith("data:") ? prev : data.qris_url));
+          if (data.is_active !== undefined) {
+            setQrisIsActive(data.is_active);
+          }
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isCancelled = true;
+    };
+  }, [workshopId]);
 
   const handleEditBank = (acc: typeof bankAccounts[0]) => {
     setEditingBankId(acc.id);
@@ -1052,7 +1191,10 @@ function PengaturanPembayaranBengkel() {
       // Jika ada file baru yang diunggah, coba upload
       if (qrisFile) {
         try {
-          finalUrl = await storagePaymentService.uploadQRIS(workshopId, qrisFile);
+          const uploadedUrl = await storagePaymentService.uploadQRIS(workshopId, qrisFile);
+          if (uploadedUrl) {
+            finalUrl = uploadedUrl;
+          }
         } catch {
           finalUrl = qrisPreview;
         }
@@ -1082,16 +1224,22 @@ function PengaturanPembayaranBengkel() {
 
       if (typeof window !== "undefined") {
         try {
-          localStorage.setItem("appbenk_qris_active", JSON.stringify(basePayload));
           localStorage.setItem(`appbenk_qris_active_${workshopId}`, JSON.stringify(basePayload));
-          localStorage.setItem("appbenk_qris_image_data", finalUrl);
           localStorage.setItem(`appbenk_qris_image_data_${workshopId}`, finalUrl);
+          localStorage.setItem("appbenk_qris_active", JSON.stringify(basePayload));
+          localStorage.setItem("appbenk_qris_image_data", finalUrl);
         } catch (e) {
           console.warn("Storage quota warning on qris save:", e);
         }
       }
 
       const savedAcc = await simpanPaymentAccount(basePayload);
+
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("appbenk_payment_accounts_updated", { detail: savedAcc }),
+        );
+      }
 
       setQrisPreview(savedAcc.qr_image_url || finalUrl);
       setQrisFile(null);
