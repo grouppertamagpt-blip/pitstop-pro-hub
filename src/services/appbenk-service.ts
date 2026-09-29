@@ -1,5 +1,5 @@
-import { supabase } from "@/lib/supabase";
-export { supabase };
+import { supabase, getSupabaseConfig } from "@/lib/supabase";
+export { supabase, getSupabaseConfig };
 import type {
   PelangganRow,
   KendaraanRow,
@@ -46,11 +46,7 @@ import type {
  * Check whether Supabase environment variables are properly defined.
  */
 export function isSupabaseConfigured(): boolean {
-  const url = import.meta.env["VITE_SUPABASE_URL"] as string | undefined;
-  const key = import.meta.env["VITE_SUPABASE_ANON_KEY"] as string | undefined;
-  return Boolean(
-    url && key && !url.includes("YOUR_PROJECT_REF") && !key.includes("YOUR_SUPABASE_ANON_KEY"),
-  );
+  return getSupabaseConfig().isConfigured;
 }
 
 // ----------------------------------------------------------------------------

@@ -561,20 +561,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let live = true;
-    const client = supabase();
-    client.auth.getSession().then(async ({ data }) => {
-      if (live && data.session) setUser(await loadProfile(data.session.user.id));
-      if (live) setLoading(false);
-    });
-    const { data: listener } = client.auth.onAuthStateChange(async (_event, session) => {
-      if (!live) return;
-      setUser(session ? await loadProfile(session.user.id) : null);
+    try {
+      const client = supabase();
+      client.auth
+        .getSession()
+        .then(async ({ data }) => {
+          if (live && data?.session?.user?.id) {
+            try {
+              const loaded = await loadProfile(data.session.user.id);
+              if (live) setUser(loaded);
+            } catch (err) {
+              console.warn("[Auth] Gagal loadProfile:", err);
+            }
+          }
+          if (live) setLoading(false);
+        })
+        .catch((err) => {
+          console.warn("[Auth] Gagal getSession:", err);
+          if (live) setLoading(false);
+        });
+
+      const { data: listener } = client.auth.onAuthStateChange(async (_event, session) => {
+        if (!live) return;
+        if (session?.user?.id) {
+          try {
+            const loaded = await loadProfile(session.user.id);
+            if (live) setUser(loaded);
+          } catch {
+            if (live) setUser(null);
+          }
+        } else {
+          setUser(null);
+        }
+        setLoading(false);
+      });
+
+      return () => {
+        live = false;
+        listener?.subscription?.unsubscribe();
+      };
+    } catch (err) {
+      console.warn("[Auth] Gagal inisialisasi sesi auth:", err);
       setLoading(false);
-    });
-    return () => {
-      live = false;
-      listener.subscription.unsubscribe();
-    };
+    }
   }, []);
 
   const value = useMemo<AuthCtx>(

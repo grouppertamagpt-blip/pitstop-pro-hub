@@ -19,6 +19,21 @@ import { HOME_ROLE, LABEL_ROLE, useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/login")({
   ssr: false,
+  errorComponent: ({ reset }) => (
+    <AuthLayout aksi="daftar">
+      <div className="w-full max-w-md">
+        <div className="rounded-2xl border bg-card p-6 shadow-sm text-center">
+          <h2 className="font-display text-xl font-bold">Terjadi Kendala Memuat Halaman</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Sesi atau koneksi sedang dipersiapkan. Silakan coba muat ulang.
+          </p>
+          <Button onClick={() => reset()} className="mt-5">
+            Coba Lagi
+          </Button>
+        </div>
+      </div>
+    </AuthLayout>
+  ),
   head: () => ({
     meta: [
       { title: "Login — AppBenk Solusi Servis Kendaraan" },
@@ -86,7 +101,9 @@ function LoginPage() {
   }, [lockoutSeconds]);
 
   useEffect(() => {
-    if (user) navigate({ to: HOME_ROLE[user.role], replace: true });
+    if (user?.role && HOME_ROLE[user.role]) {
+      navigate({ to: HOME_ROLE[user.role], replace: true });
+    }
   }, [user, navigate]);
 
   const recordFailedAttempt = () => {
