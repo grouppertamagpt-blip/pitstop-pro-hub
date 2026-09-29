@@ -33,17 +33,45 @@ const memoryStorage = {
   removeItem: (_key: string) => {},
 };
 
+function sanitizeUrl(raw: string): string {
+  let val = (raw || '').trim();
+  const mdMatch = val.match(/\((https?:\/\/[^\s\)]+)\)/i) || val.match(/\[(https?:\/\/[^\]\s]+)\]/i);
+  if (mdMatch && mdMatch[1]) {
+    val = mdMatch[1];
+  }
+  val = val.replace(/^[\["'`]+|[\]"'`]+$/g, '').trim();
+  if (val && !/^https?:\/\//i.test(val)) {
+    val = `https://${val}`;
+  }
+  return val.replace(/\/+$/, '');
+}
+
+function sanitizeKey(raw: string): string {
+  let val = (raw || '').trim();
+  val = val.replace(/^[\["'`]+|[\]"'`]+$/g, '').trim();
+  return val;
+}
+
+function isValidHttpUrl(string: string): boolean {
+  try {
+    const u = new URL(string);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function createSupabaseClient() {
   const isServer = typeof window === 'undefined';
 
   // Resolusi fallback ganda: process.env (Vercel Serverless / SSR) & import.meta.env (Vite Client)
-  const SUPABASE_URL =
+  const rawUrl =
     (typeof process !== 'undefined' && (process.env?.VITE_SUPABASE_URL || process.env?.SUPABASE_URL)) ||
     (typeof import.meta !== 'undefined' &&
       ((import.meta as any).env?.VITE_SUPABASE_URL || (import.meta as any).env?.SUPABASE_URL)) ||
     '';
 
-  const SUPABASE_PUBLISHABLE_KEY =
+  const rawKey =
     (typeof process !== 'undefined' &&
       (process.env?.VITE_SUPABASE_ANON_KEY ||
         process.env?.SUPABASE_ANON_KEY ||
@@ -56,15 +84,21 @@ function createSupabaseClient() {
         (import.meta as any).env?.SUPABASE_PUBLISHABLE_KEY)) ||
     '';
 
+  const SUPABASE_URL = sanitizeUrl(rawUrl);
+  const SUPABASE_PUBLISHABLE_KEY = sanitizeKey(rawKey);
+
   const isConfigured = Boolean(
     SUPABASE_URL &&
       SUPABASE_PUBLISHABLE_KEY &&
+      isValidHttpUrl(SUPABASE_URL) &&
       !SUPABASE_URL.includes('YOUR_PROJECT_REF') &&
       !SUPABASE_URL.includes('placeholder-project')
   );
 
-  const activeUrl = isConfigured ? SUPABASE_URL.trim() : 'https://placeholder-project.supabase.co';
-  const activeKey = isConfigured
+  const activeUrl = isConfigured && isValidHttpUrl(SUPABASE_URL)
+    ? SUPABASE_URL.trim()
+    : 'https://placeholder-project.supabase.co';
+  const activeKey = isConfigured && SUPABASE_PUBLISHABLE_KEY
     ? SUPABASE_PUBLISHABLE_KEY.trim()
     : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy-anon-key-safe-ssr';
 
@@ -74,24 +108,31 @@ function createSupabaseClient() {
     );
   }
 
-  return createClient<Database>(activeUrl, activeKey, {
-    global: {
-      fetch: createSupabaseFetch(activeKey),
-    },
-    auth: isServer
-      ? {
-          storage: memoryStorage,
-          persistSession: false,
-          autoRefreshToken: false,
-          detectSessionInUrl: false,
-        }
-      : {
-          storage: brokeredPreviewStorage() || memoryStorage,
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: true,
-        },
-  });
+  try {
+    return createClient<Database>(activeUrl, activeKey, {
+      global: {
+        fetch: createSupabaseFetch(activeKey),
+      },
+      auth: isServer
+        ? {
+            storage: memoryStorage,
+            persistSession: false,
+            autoRefreshToken: false,
+            detectSessionInUrl: false,
+          }
+        : {
+            storage: brokeredPreviewStorage() || memoryStorage,
+            persistSession: true,
+            autoRefreshToken: true,
+            detectSessionInUrl: true,
+          },
+    });
+  } catch (err) {
+    console.error('[Supabase integration client] Gagal createClient, fallback dummy:', err);
+    return createClient<Database>('https://placeholder-project.supabase.co', 'dummy-key', {
+      auth: { storage: memoryStorage, persistSession: false, autoRefreshToken: false },
+    });
+  }
 }
 
 let _supabase: ReturnType<typeof createSupabaseClient> | undefined;

@@ -29,17 +29,52 @@ function getClientStorage() {
 }
 
 /**
+ * Pembersih string URL Supabase:
+ * Menangani kasus jika pengguna tidak sengaja menempelkan format markdown [url](url),
+ * petik, atau trailing slash yang dapat menyebabkan error 'Must be a valid HTTP or HTTPS URL'.
+ */
+function sanitizeUrl(raw: string): string {
+  let val = (raw || "").trim();
+  // Tangani format link markdown: [url](url)
+  const mdMatch = val.match(/\((https?:\/\/[^\s\)]+)\)/i) || val.match(/\[(https?:\/\/[^\]\s]+)\]/i);
+  if (mdMatch && mdMatch[1]) {
+    val = mdMatch[1];
+  }
+  // Bersihkan karakter pembungkus seperti kurung siku, petik tunggal/ganda
+  val = val.replace(/^[\["'`]+|[\]"'`]+$/g, "").trim();
+  if (val && !/^https?:\/\//i.test(val)) {
+    val = `https://${val}`;
+  }
+  return val.replace(/\/+$/, "");
+}
+
+function sanitizeKey(raw: string): string {
+  let val = (raw || "").trim();
+  val = val.replace(/^[\["'`]+|[\]"'`]+$/g, "").trim();
+  return val;
+}
+
+function isValidHttpUrl(string: string): boolean {
+  try {
+    const u = new URL(string);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Resolusi konfigurasi Supabase dengan dual fallback:
  * Mendukung pembacaan dari process.env (Vercel Serverless / Node.js) dan import.meta.env (Vite Client).
  */
 export function getSupabaseConfig(): { url: string; anonKey: string; isConfigured: boolean } {
-  const url =
+  const rawUrl =
     (typeof process !== "undefined" && (process.env?.VITE_SUPABASE_URL || process.env?.SUPABASE_URL)) ||
     (typeof import.meta !== "undefined" &&
       ((import.meta as any).env?.VITE_SUPABASE_URL || (import.meta as any).env?.SUPABASE_URL)) ||
     "";
 
-  const anonKey =
+  const rawKey =
     (typeof process !== "undefined" &&
       (process.env?.VITE_SUPABASE_ANON_KEY ||
         process.env?.SUPABASE_ANON_KEY ||
@@ -52,20 +87,24 @@ export function getSupabaseConfig(): { url: string; anonKey: string; isConfigure
         (import.meta as any).env?.SUPABASE_PUBLISHABLE_KEY)) ||
     "";
 
+  const url = sanitizeUrl(rawUrl);
+  const anonKey = sanitizeKey(rawKey);
+
   const isConfigured = Boolean(
     url &&
       anonKey &&
+      isValidHttpUrl(url) &&
       !url.includes("YOUR_PROJECT_REF") &&
       !anonKey.includes("YOUR_SUPABASE_ANON_KEY") &&
       !url.includes("placeholder-project"),
   );
 
-  return { url: url.trim(), anonKey: anonKey.trim(), isConfigured };
+  return { url, anonKey, isConfigured };
 }
 
 /**
  * Inisialisasi Supabase client yang aman untuk SSR (Server-Side Rendering) dan Client Browser.
- * Mencegah unhandled exception jika environment variables belum terpasang di Vercel atau saat SSR.
+ * Mencegah unhandled exception jika environment variables salah format atau belum disetel.
  */
 export function supabase(): SupabaseClient {
   const isServer = typeof window === "undefined";
@@ -79,34 +118,41 @@ export function supabase(): SupabaseClient {
 
   const { url, anonKey, isConfigured } = getSupabaseConfig();
 
-  // Jika URL atau Key belum terdefinisi saat SSR, jangan biarkan aplikasi langsung melempar unhandled exception / crash total.
-  // Gunakan placeholder aman yang valid secara sintaksis URL.
-  const activeUrl = isConfigured ? url : "https://placeholder-project.supabase.co";
-  const activeKey = isConfigured
+  // Jika URL atau Key belum terdefinisi atau tidak valid, gunakan placeholder aman
+  const activeUrl = isConfigured && isValidHttpUrl(url) ? url : "https://placeholder-project.supabase.co";
+  const activeKey = isConfigured && anonKey
     ? anonKey
     : "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy-anon-key-safe-ssr";
 
   if (!isConfigured) {
     console.warn(
-      `[Supabase] Kredensial Supabase (${isServer ? "SSR Node.js" : "Client Browser"}) belum terdefinisi. Menggunakan placeholder aman agar tidak crash.`,
+      `[Supabase] Kredensial Supabase (${isServer ? "SSR Node.js" : "Client Browser"}) belum valid. Menggunakan placeholder aman agar tidak crash.`,
     );
   }
 
-  const instance = createClient(activeUrl, activeKey, {
-    auth: isServer
-      ? {
-          persistSession: false,
-          autoRefreshToken: false,
-          detectSessionInUrl: false,
-          storage: memoryStorage,
-        }
-      : {
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: true,
-          storage: getClientStorage(),
-        },
-  });
+  const authOptions = isServer
+    ? {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+        storage: memoryStorage,
+      }
+    : {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        storage: getClientStorage(),
+      };
+
+  let instance: SupabaseClient;
+  try {
+    instance = createClient(activeUrl, activeKey, { auth: authOptions });
+  } catch (err) {
+    console.error("[Supabase] Gagal inisialisasi createClient, fallback ke dummy instance:", err);
+    instance = createClient("https://placeholder-project.supabase.co", "dummy-key-safe", {
+      auth: { persistSession: false, autoRefreshToken: false, storage: memoryStorage },
+    });
+  }
 
   if (isServer) {
     serverClient = instance;

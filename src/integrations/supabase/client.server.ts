@@ -27,11 +27,37 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
   };
 }
 
-function createSupabaseAdminClient() {
-  const SUPABASE_URL = process.env['SUPABASE_URL'] || process.env['VITE_SUPABASE_URL'] || '';
-  const SUPABASE_SERVICE_ROLE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] || '';
+function sanitizeUrl(raw: string): string {
+  let val = (raw || '').trim();
+  const mdMatch = val.match(/\((https?:\/\/[^\s\)]+)\)/i) || val.match(/\[(https?:\/\/[^\]\s]+)\]/i);
+  if (mdMatch && mdMatch[1]) {
+    val = mdMatch[1];
+  }
+  val = val.replace(/^[\["'`]+|[\]"'`]+$/g, '').trim();
+  if (val && !/^https?:\/\//i.test(val)) {
+    val = `https://${val}`;
+  }
+  return val.replace(/\/+$/, '');
+}
 
-  const isConfigured = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && !SUPABASE_URL.includes('placeholder'));
+function sanitizeKey(raw: string): string {
+  let val = (raw || '').trim();
+  val = val.replace(/^[\["'`]+|[\]"'`]+$/g, '').trim();
+  return val;
+}
+
+function createSupabaseAdminClient() {
+  const rawUrl = process.env['SUPABASE_URL'] || process.env['VITE_SUPABASE_URL'] || '';
+  const rawKey = process.env['SUPABASE_SERVICE_ROLE_KEY'] || '';
+
+  const SUPABASE_URL = sanitizeUrl(rawUrl);
+  const SUPABASE_SERVICE_ROLE_KEY = sanitizeKey(rawKey);
+
+  const isConfigured = Boolean(
+    SUPABASE_URL &&
+      SUPABASE_SERVICE_ROLE_KEY &&
+      !SUPABASE_URL.includes('placeholder')
+  );
   const activeUrl = isConfigured ? SUPABASE_URL.trim() : 'https://placeholder-project.supabase.co';
   const activeKey = isConfigured ? SUPABASE_SERVICE_ROLE_KEY.trim() : 'dummy-service-role-key-safe-ssr';
 
@@ -39,16 +65,23 @@ function createSupabaseAdminClient() {
     console.warn('[Supabase admin] SUPABASE_SERVICE_ROLE_KEY belum terpasang. Admin client menggunakan placeholder.');
   }
 
-  return createClient<Database>(activeUrl, activeKey, {
-    global: {
-      fetch: createSupabaseFetch(activeKey),
-    },
-    auth: {
-      storage: undefined,
-      persistSession: false,
-      autoRefreshToken: false,
-    }
-  });
+  try {
+    return createClient<Database>(activeUrl, activeKey, {
+      global: {
+        fetch: createSupabaseFetch(activeKey),
+      },
+      auth: {
+        storage: undefined,
+        persistSession: false,
+        autoRefreshToken: false,
+      }
+    });
+  } catch (err) {
+    console.error('[Supabase admin] Gagal createClient admin, fallback dummy:', err);
+    return createClient<Database>('https://placeholder-project.supabase.co', 'dummy-key', {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+  }
 }
 
 let _supabaseAdmin: ReturnType<typeof createSupabaseAdminClient> | undefined;
