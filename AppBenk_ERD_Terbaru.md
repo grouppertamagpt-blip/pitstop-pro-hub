@@ -1,10 +1,10 @@
 # 🗃️ AppBenk — Entity Relationship Diagram (ERD) Terbaru
 
-> **Versi:** September 2026 (Revisi Lengkap Super Admin, Onboarding, Payment Manual & CS Terpusat)  
+> **Versi:** 30 September 2026 (Revisi Terkini: Constraint Unik Booking-Servis, Notifikasi Realtime, Multi-Tenant SaaS & Super Admin)  
 > **Database Engine:** PostgreSQL (Supabase Cloud Live)  
-> **Arsitektur:** Multi-Tenant SaaS (Multi-Bengkel terisolasi)  
+> **Arsitektur:** Multi-Tenant SaaS (Multi-Bengkel terisolasi dengan Row Level Security)  
 > **Jangkar Multi-Tenant:** `id_bengkel` / `workshop_id`  
-> **Total Entitas Database:** 28 Tabel (1 Core Auth + 27 Public Tables)
+> **Total Entitas Database:** 30 Tabel (1 Core Auth + 29 Public Tables)
 
 ---
 
@@ -17,69 +17,71 @@ erDiagram
     AUTH_USERS ||--|| PROFILES : "1 user -> 1 profil"
     AUTH_USERS ||--o| OWNER : "akun owner"
     AUTH_USERS ||--o| ADMIN : "akun admin"
-    AUTH_USERS ||--o| PELANGGAN : "akun pelanggan"
+    AUTH_USERS ||--o| PELANGGAN : "akun pelanggan (opsional login)"
     AUTH_USERS ||--o{ WORKSHOP_APPLICATIONS : "pengajuan buka bengkel"
     AUTH_USERS ||--o{ ADMIN_INVITATIONS : "owner pembuat & staf pengklaim"
     AUTH_USERS ||--o{ WORKSHOP_MEMBERS : "keanggotaan bengkel"
-    AUTH_USERS ||--o{ NOTIFICATION_LOGS : "penerima notifikasi"
+    AUTH_USERS ||--o{ NOTIFIKASI : "penerima notifikasi in-app"
+    AUTH_USERS ||--o{ NOTIFICATION_LOGS : "log pengiriman notifikasi"
     AUTH_USERS ||--o{ PEMBAYARAN : "verifikator kasir"
     AUTH_USERS ||--o{ CUSTOMER_SERVICE_TICKETS : "pelapor tiket CS"
     AUTH_USERS ||--o{ CUSTOMER_SERVICE_MESSAGES : "pengirim pesan CS"
 
     BENGKEL ||--o| OWNER : "dimiliki owner (1-to-1)"
     BENGKEL ||--o{ ADMIN : "mempekerjakan admin (1-to-N)"
-    BENGKEL ||--o{ MEKANIK : "memiliki teknisi"
-    BENGKEL ||--o{ SUPPLIER : "mitra pemasok"
-    BENGKEL ||--o{ BOOKING_SERVIS : "menerima reservasi"
-    BENGKEL ||--o{ SERVIS : "pelaksanaan servis"
-    BENGKEL ||--o{ PEMBELIAN_SPAREPART : "pengadaan stok"
-    BENGKEL ||--o{ RETUR_SPAREPART : "pengembalian barang"
+    BENGKEL ||--o{ MEKANIK : "memiliki teknisi bengkel"
+    BENGKEL ||--o{ SUPPLIER : "mitra pemasok suku cadang"
+    BENGKEL ||--o{ BOOKING_SERVIS : "menerima reservasi pelanggan"
+    BENGKEL ||--o{ SERVIS : "pelaksanaan operasional servis"
+    BENGKEL ||--o{ PEMBELIAN_SPAREPART : "pengadaan stok gudang"
+    BENGKEL ||--o{ RETUR_SPAREPART : "pengembalian barang supplier"
     BENGKEL ||--o{ STOK_OPNAME : "opname fisik berkala"
-    BENGKEL ||--o{ WORKSHOP_PAYMENT_ACCOUNTS : "rekening & QRIS"
+    BENGKEL ||--o{ WORKSHOP_PAYMENT_ACCOUNTS : "rekening & QRIS kasir"
+    BENGKEL ||--o{ NOTIFIKASI : "notifikasi operasional bengkel"
     BENGKEL ||--o{ CUSTOMER_SERVICE_TICKETS : "tiket CS terkait"
     BENGKEL ||--o{ ADMIN_INVITATIONS : "antrean undangan staf"
-    BENGKEL ||--o{ SYSTEM_LOGS : "log monitor sistem"
-    BENGKEL ||--o| WORKSHOP_APPLICATIONS : "hasil approval"
+    BENGKEL ||--o{ SYSTEM_LOGS : "log error & monitor sistem"
+    BENGKEL ||--o| WORKSHOP_APPLICATIONS : "hasil approval registrasi"
 
-    WORKSHOPS ||--o{ WORKSHOP_MEMBERS : "anggota workspace"
-    WORKSHOPS ||--o{ WORKSHOP_PAYMENT_ACCOUNTS : "payment workspace"
-    WORKSHOPS ||--o{ NOTIFICATION_LOGS : "log workspace"
+    WORKSHOPS ||--o{ WORKSHOP_MEMBERS : "anggota workspace SaaS"
+    WORKSHOPS ||--o{ WORKSHOP_PAYMENT_ACCOUNTS : "payment workspace SaaS"
+    WORKSHOPS ||--o{ NOTIFICATION_LOGS : "log notifikasi workspace"
 
     %% ── PELANGGAN & KENDARAAN ──
-    PELANGGAN ||--o{ KENDARAAN : "memiliki kendaraan"
-    PELANGGAN ||--o{ BOOKING_SERVIS : "membuat booking"
-    PELANGGAN ||--o{ SERVIS : "menerima servis"
-    PELANGGAN ||--o{ PEMBAYARAN : "membayar tagihan"
-    PELANGGAN ||--o{ CUSTOMER_SERVICE_TICKETS : "mengajukan tiket CS"
+    PELANGGAN ||--o{ KENDARAAN : "memiliki 1 atau banyak motor"
+    PELANGGAN ||--o{ BOOKING_SERVIS : "membuat reservasi booking"
+    PELANGGAN ||--o{ SERVIS : "menerima pengerjaan servis"
+    PELANGGAN ||--o{ PEMBAYARAN : "melakukan pembayaran tagihan"
+    PELANGGAN ||--o{ CUSTOMER_SERVICE_TICKETS : "mengajukan tiket bantuan"
 
-    KENDARAAN ||--o{ BOOKING_SERVIS : "objek booking"
-    KENDARAAN ||--o{ SERVIS : "objek servis"
+    KENDARAAN ||--o{ BOOKING_SERVIS : "kendaraan yang dibooking"
+    KENDARAAN ||--o{ SERVIS : "kendaraan yang diservis"
 
-    %% ── OPERASIONAL SERVIS ──
-    MEKANIK ||--o{ BOOKING_SERVIS : "teknisi pilihan (opsional)"
-    MEKANIK ||--o{ SERVIS : "teknisi penanggung jawab"
+    %% ── OPERASIONAL SERVIS (DENGAN UNIQUE CONSTRAINT 1 BOOKING = 1 SERVIS) ──
+    MEKANIK ||--o{ BOOKING_SERVIS : "teknisi pilihan pelanggan"
+    MEKANIK ||--o{ SERVIS : "teknisi penanggung jawab pengerjaan"
 
-    BOOKING_SERVIS ||--o| SERVIS : "dikonversi menjadi servis"
+    BOOKING_SERVIS ||--o| SERVIS : "1 booking tepat dikaitkan ke 1 servis aktif (UNIQUE)"
 
-    SERVIS ||--o{ DETAIL_SERVIS : "rincian jasa dan part"
-    SERVIS ||--o{ PENGGUNAAN_SPAREPART : "pemakaian suku cadang"
-    SERVIS ||--o| PEMBAYARAN : "1 servis -> 1 pembayaran"
+    SERVIS ||--o{ DETAIL_SERVIS : "rincian pemakaian sparepart & jasa"
+    SERVIS ||--o{ PENGGUNAAN_SPAREPART : "pencatatan konsumsi suku cadang"
+    SERVIS ||--o| PEMBAYARAN : "1 transaksi servis -> 1 faktur pembayaran"
 
     %% ── INVENTARIS & PENGADAAN GUDANG ──
-    SPAREPART ||--o{ DETAIL_SERVIS : "direferensikan di detail"
-    SPAREPART ||--o{ PENGGUNAAN_SPAREPART : "dikurangkan dari stok"
-    SPAREPART ||--o{ PEMBELIAN_SPAREPART : "ditambahkan ke stok"
-    SPAREPART ||--o{ RIWAYAT_STOK : "audit trail mutasi"
-    SPAREPART ||--o{ RETUR_SPAREPART : "barang diretur"
-    SPAREPART ||--o{ LAPORAN_RINGKASAN_STOK : "rekap laporan"
+    SPAREPART ||--o{ DETAIL_SERVIS : "direferensikan di detail servis"
+    SPAREPART ||--o{ PENGGUNAAN_SPAREPART : "stok berkurang karena servis"
+    SPAREPART ||--o{ PEMBELIAN_SPAREPART : "stok bertambah dari supplier"
+    SPAREPART ||--o{ RIWAYAT_STOK : "audit trail kartu stok otomatis"
+    SPAREPART ||--o{ RETUR_SPAREPART : "barang cacat diretur ke supplier"
+    SPAREPART ||--o{ LAPORAN_RINGKASAN_STOK : "rekapitulasi inventaris bulanan"
 
-    SUPPLIER ||--o{ PEMBELIAN_SPAREPART : "menyuplai suku cadang"
-    SUPPLIER ||--o{ RETUR_SPAREPART : "menerima barang retur"
+    SUPPLIER ||--o{ PEMBELIAN_SPAREPART : "pemasok suku cadang"
+    SUPPLIER ||--o{ RETUR_SPAREPART : "tujuan pengembalian barang retur"
 
-    PEMBELIAN_SPAREPART ||--o{ RETUR_SPAREPART : "faktur asal retur"
+    PEMBELIAN_SPAREPART ||--o{ RETUR_SPAREPART : "faktur nota asal retur"
 
     %% ── CS & LAYANAN PENGADUAN ──
-    CUSTOMER_SERVICE_TICKETS ||--o{ CUSTOMER_SERVICE_MESSAGES : "thread percakapan"
+    CUSTOMER_SERVICE_TICKETS ||--o{ CUSTOMER_SERVICE_MESSAGES : "thread balasan percakapan tiket"
 
     %% ── DEFINISI ATRIBUT ENTITAS ──
 
@@ -113,6 +115,7 @@ erDiagram
         text nama_bengkel
         text alamat
         text no_telepon
+        text jam_operasional
         text paket "Basic | Premium"
         text status "Aktif | Nonaktif"
         text owner_nama
@@ -125,9 +128,9 @@ erDiagram
     }
 
     WORKSHOPS {
-        text id PK
+        text id PK "UUID / Slug"
         text name
-        text code UK
+        text code UK "contoh: BGL-001"
         uuid owner_id FK "FK auth.users.id"
         text phone
         text email
@@ -145,7 +148,7 @@ erDiagram
 
     WORKSHOP_MEMBERS {
         uuid id PK
-        text workshop_id FK
+        text workshop_id FK "FK workshops.id"
         uuid user_id FK "FK auth.users.id"
         text role "OWNER | ADMIN | MECHANIC | CUSTOMER"
         text status
@@ -228,10 +231,10 @@ erDiagram
     KENDARAAN {
         uuid id_kendaraan PK
         text id_pelanggan FK "FK pelanggan.id_pelanggan"
-        text merk "Honda | Yamaha | Suzuki | Kawasaki"
+        text merk "Honda | Yamaha | Suzuki | Kawasaki | dll"
         text tipe "Vario 160 | NMAX | Beat | dll"
         int tahun
-        text nopol
+        text nopol "Nomor Polisi / Plat"
         int kilometer
         text id_bengkel FK
         text workshop_id FK
@@ -263,7 +266,7 @@ erDiagram
         text jenis_servis
         text keluhan
         text mekanik_diinginkan
-        text status_booking
+        text status_booking "menunggu_konfirmasi | disetujui | ditolak"
         text alasan_penolakan
         text workshop_id FK
         timestamptz created_at
@@ -273,7 +276,7 @@ erDiagram
     SERVIS {
         uuid id_servis PK
         text nomor_servis UK "contoh: SRV-2026-0001"
-        uuid id_booking FK "FK booking_servis.id_booking"
+        uuid id_booking UK "FK booking_servis.id_booking (UNIQUE INDEX)"
         text id_pelanggan FK "FK pelanggan.id_pelanggan"
         uuid id_kendaraan FK "FK kendaraan.id_kendaraan"
         text id_bengkel FK "FK bengkel.id_bengkel"
@@ -288,7 +291,7 @@ erDiagram
         numeric biaya_jasa
         numeric biaya_sparepart
         numeric total_biaya
-        text status_servis
+        text status_servis "menunggu | diproses | selesai | lunas"
         date tanggal_servis
         timestamptz tanggal_mulai
         timestamptz estimasi_selesai
@@ -316,8 +319,8 @@ erDiagram
         text id_sparepart PK "contoh: sp-001"
         text kode
         text nama_sparepart
-        text kategori
-        text satuan
+        text kategori "Pelumas | Pengereman | Transmisi | dll"
+        text satuan "Botol | Pcs | Set | Liter"
         numeric harga
         int stok_tersedia
         int stok_minimum
@@ -430,7 +433,7 @@ erDiagram
         int stok_masuk
         int stok_keluar
         int stok_akhir
-        text periode
+        text periode "YYYY-MM"
         text id_bengkel FK
         text workshop_id FK
         timestamptz created_at
@@ -446,7 +449,7 @@ erDiagram
         timestamptz tanggal_bayar
         numeric jumlah_bayar
         text status_pembayaran "belum_dibayar | menunggu_verifikasi | lunas | ditolak"
-        text bukti_pembayaran
+        text bukti_pembayaran "URL Bukti Struk / Transfer"
         text alasan_penolakan
         uuid verified_by FK "FK auth.users.id"
         timestamptz verified_at
@@ -458,7 +461,7 @@ erDiagram
     WORKSHOP_PAYMENT_ACCOUNTS {
         uuid id PK
         text id_bengkel FK "FK bengkel.id_bengkel"
-        text workshop_id FK
+        text workshop_id FK "FK workshops.id"
         text account_type "bank_transfer | qris"
         text provider "MANUAL | MIDTRANS"
         text provider_account_id
@@ -473,10 +476,22 @@ erDiagram
         timestamptz updated_at
     }
 
+    NOTIFIKASI {
+        uuid id PK
+        uuid user_id FK "FK auth.users.id (nullable)"
+        text bengkel_id FK "FK bengkel.id_bengkel (nullable)"
+        text judul
+        text pesan
+        text tipe "booking | servis | pembayaran | info"
+        text tautan_url
+        bool is_read
+        timestamptz created_at
+    }
+
     NOTIFICATION_LOGS {
         uuid id PK
         text id_bengkel FK "FK bengkel.id_bengkel"
-        text workshop_id FK
+        text workshop_id FK "FK workshops.id"
         uuid user_id FK "FK auth.users.id"
         text channel "in_app | EMAIL | WHATSAPP"
         text type "pembayaran | booking | servis"
@@ -532,11 +547,11 @@ erDiagram
 
 ---
 
-## 📋 2. Daftar 28 Entitas Database & Klasifikasi Modul
+## 📋 2. Daftar 30 Entitas Database & Klasifikasi Modul
 
 | No | Nama Tabel | Modul Fungsional | Kunci Utama (PK) | Kolom Multi-Tenant | Peran Utama Terkait |
 |:---|:---|:---|:---|:---|:---|
-| 1 | `auth.users` | Supabase Auth Core | `id` (UUID) | — | Sistem / Semua Pengguna |
+| 1 | `auth.users` | Supabase Auth Core | `id` (UUID) | — | Sistem / Seluruh Pengguna |
 | 2 | `profiles` | User Profile & Bridge | `id` (UUID) | `id_bengkel` / `workshop_id` | Semua Peran (`app_role`) |
 | 3 | `bengkel` | Master Bengkel Utama | `id_bengkel` (TEXT) | `id_bengkel` (PK) | Super Admin & Owner |
 | 4 | `workshops` | Master Workshop (SaaS) | `id` (TEXT) | `id` (PK) | Super Admin & Owner |
@@ -561,10 +576,11 @@ erDiagram
 | 23 | `laporan_ringkasan_stok` | Rekap Laporan Bulanan | `id_ringkasan_stok` (UUID) | `id_bengkel` | Owner & Admin |
 | 24 | `pembayaran` | Transaksi Kasir & Finansial | `id_pembayaran` (UUID) | `id_bengkel` | Pelanggan, Kasir, Admin |
 | 25 | `workshop_payment_accounts` | Rekening Bank & QRIS Kasir | `id` (UUID) | `id_bengkel` | Owner & Kasir |
-| 26 | `notification_logs` | Log Notifikasi Sistem | `id` (UUID) | `id_bengkel` | Sistem |
-| 27 | `customer_service_tickets` | Eskalasi Pengaduan Platform | `id` (UUID) | `bengkel_id` (Nullable) | Semua Pengguna & Super Admin |
-| 28 | `customer_service_messages`| Obrolan Tiket Terpadu | `id` (UUID) | Terikat via `ticket_id` | Pelapor & Super Admin |
-| 29 | `system_logs` | Audit Error Platform | `id` (UUID) | `bengkel_id` (Nullable) | Super Admin |
+| 26 | `notifikasi` | Notifikasi Realtime In-App | `id` (UUID) | `bengkel_id` | Pelanggan, Admin, Owner |
+| 27 | `notification_logs` | Log Pengiriman Gateway | `id` (UUID) | `id_bengkel` | Sistem Gateway |
+| 28 | `customer_service_tickets` | Eskalasi Pengaduan Platform | `id` (UUID) | `bengkel_id` (Nullable) | Seluruh Pengguna & Super Admin |
+| 29 | `customer_service_messages`| Obrolan Tiket Terpadu | `id` (UUID) | Terikat via `ticket_id` | Pelapor & Super Admin |
+| 30 | `system_logs` | Audit Error Platform | `id` (UUID) | `bengkel_id` (Nullable) | Super Admin |
 
 ---
 
@@ -584,6 +600,9 @@ erDiagram
                                                                                    ▼
 [lunas] ◄── (Kasir Konfirmasi Lunas) ◄── [menunggu_pembayaran] ◄───────────────────┘
 ```
+
+> **Catatan Validasi Kritis (30 Sept 2026):**  
+> Kolom `id_booking` pada tabel `servis` dilindungi dengan `UNIQUE INDEX idx_servis_unique_active_booking` dan trigger `check_servis_booking_unique()`. **Satu booking aktif hanya boleh dikaitkan ke satu pengerjaan servis**, mencegah bug double submit atau auto-healing duplikat.
 
 ### C. Alur Verifikasi Pembayaran (Kasir / QRIS / Transfer)
 ```
@@ -622,6 +641,7 @@ erDiagram
 |:---|:---|:---|
 | `on_auth_user_created` | `auth.users` | Sinkronisasi otomatis entitas `profiles` dan role default `pelanggan`. |
 | `trg_prevent_role_tampering` | `profiles` | Melarang keras user biasa mengubah kolom role dirinya sendiri tanpa wewenang Owner/Super Admin. |
+| `trg_check_servis_booking_unique` | `servis` | **Mencegah duplikasi servis**: Memastikan `id_booking` belum pernah dikaitkan ke servis lain sebelum `INSERT/UPDATE`. |
 | `trg_on_penggunaan_sparepart` | `penggunaan_sparepart` | Memotong `stok_tersedia` di tabel `sparepart`, memperbarui `status_stok`, dan mencatat `riwayat_stok` (tipe: keluar). |
 | `trg_on_pembelian_sparepart` | `pembelian_sparepart` | Menambah `stok_tersedia` di tabel `sparepart`, memperbarui `status_stok`, dan mencatat `riwayat_stok` (tipe: masuk). |
 | `trg_on_retur_sparepart` | `retur_sparepart` | Jika status disetujui: memotong `stok_tersedia` di tabel `sparepart` dan mencatat `riwayat_stok` (tipe: keluar / retur). |
@@ -640,7 +660,7 @@ erDiagram
 | `profiles` | Baca/Edit Sendiri | Baca/Edit Bengkel | Baca/Edit Bengkel | Full Access |
 | `bengkel` | Baca Publik/Terpilih | Baca Bengkel Sendiri | Baca/Edit Bengkel Sendiri | Full Access |
 | `pelanggan` | Baca/Edit Data Sendiri | Full Access Bengkel | Full Access Bengkel | Full Access |
-| `kendaraan` | Baca/Edit Kendaraan Sendiri| Full Access Bengkel | Full Access Bengkel | Full Access |
+| `kendaraan` | Baca/Edit Kendaraan Sendiri | Full Access Bengkel | Full Access Bengkel | Full Access |
 | `mekanik` | Baca (Katalog Pilihan) | Full Access Bengkel | Full Access Bengkel | Full Access |
 | `booking_servis` | Baca & Buat Booking Sendiri | Full Access Bengkel | Full Access Bengkel | Full Access |
 | `servis` | Baca Servis Sendiri | Full Access Bengkel | Full Access Bengkel | Full Access |
@@ -654,6 +674,7 @@ erDiagram
 | `stok_opname` | ❌ Akses Ditolak | Full Access Bengkel | Full Access Bengkel | Full Access |
 | `retur_sparepart` | ❌ Akses Ditolak | Full Access Bengkel | Full Access Bengkel | Full Access |
 | `workshop_payment_accounts` | Baca Akun Aktif | Full Access Bengkel | Full Access Bengkel | Full Access |
+| `notifikasi` | Baca/Update Milik Sendiri | Baca/Update Milik Sendiri & Bengkel | Baca/Update Milik Sendiri & Bengkel | Full Access |
 | `workshop_applications` | Baca/Buat Pengajuan Sendiri | ❌ Akses Ditolak | ❌ Akses Ditolak | Full Access (Approve/Reject) |
 | `admin_invitations` | Baca Token Valid | ❌ Akses Ditolak | Full Access Bengkel | Full Access |
 | `customer_service_tickets` | Baca/Buat Tiket Sendiri | Baca/Buat Tiket Sendiri | Baca/Buat Tiket Sendiri | Full Access (Balas & Selesaikan) |
@@ -662,4 +683,4 @@ erDiagram
 
 ---
 
-*File ini adalah dokumentasi resmi rancangan basis data AppBenk terkini yang telah disinkronkan dengan migrasi Supabase Cloud Live.*
+*Dokumentasi ini adalah representasi resmi Entity Relationship Diagram (ERD) AppBenk yang telah disinkronkan dengan migrasi Supabase Cloud Live dan arsitektur kode frontend/backend terkini.*

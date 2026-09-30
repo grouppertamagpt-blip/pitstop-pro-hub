@@ -134,7 +134,7 @@ function StokAdmin() {
 
     window.addEventListener("appbenk_sparepart_updated", handleSync);
 
-    const interval = setInterval(handleSync, 10000);
+    const interval = setInterval(handleSync, 30000);
     return () => {
       window.removeEventListener("appbenk_sparepart_updated", handleSync);
       clearInterval(interval);

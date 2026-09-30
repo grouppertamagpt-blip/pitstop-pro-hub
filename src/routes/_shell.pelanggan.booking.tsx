@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useMemo, useEffect } from "react";
-import { CalendarPlus, Car, MapPin } from "lucide-react";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { CalendarPlus, Car, MapPin, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader, EmptyState } from "@/components/page-header";
 import { BookingBadge } from "@/components/status-badge";
@@ -128,6 +128,8 @@ function BookingPelanggan() {
 
   const [form, setForm] = useState(kosong);
   const [err, setErr] = useState<Partial<Record<keyof typeof kosong, string>>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   // Sync form vehicle when registered vehicles are loaded or change
   useEffect(() => {
@@ -154,8 +156,10 @@ function BookingPelanggan() {
     return mekanik.filter((m) => m.status === "Aktif");
   }, [mekanik, form.bengkelId, bengkel]);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current || isSubmitting) return;
+
     const next: typeof err = {};
     if (!form.vehicleId || !form.kendaraan.trim()) {
       next.kendaraan = "Pilih kendaraan yang akan diservis.";
@@ -169,44 +173,63 @@ function BookingPelanggan() {
     setErr(next);
     if (Object.keys(next).length) return;
 
-    const targetCustomerId =
-      user?.pelangganId ||
-      profil?.id ||
-      (user?.id ? `pl-${user.id.slice(0, 8)}` : `pl-${Date.now().toString(36)}`);
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
 
-    if (!profil && user) {
-      simpanPelanggan({
-        id: targetCustomerId,
-        userId: user.id,
-        nama: user.nama || "Pelanggan",
-        email: user.email,
-        telepon: user.telepon ?? "",
-        alamat: "",
-        kendaraan: form.kendaraan,
-        plat: form.plat,
+    try {
+      const targetCustomerId =
+        user?.pelangganId ||
+        profil?.id ||
+        (user?.id ? `pl-${user.id.slice(0, 8)}` : `pl-${Date.now().toString(36)}`);
+
+      if (!profil && user) {
+        await simpanPelanggan({
+          id: targetCustomerId,
+          userId: user.id,
+          nama: user.nama || "Pelanggan",
+          email: user.email,
+          telepon: user.telepon ?? "",
+          alamat: "",
+          kendaraan: form.kendaraan,
+          plat: form.plat,
+        });
+      }
+
+      const { jenisLainnya, ...bookingForm } = form;
+      const baru = await buatBooking({
+        ...bookingForm,
+        bengkelId: form.bengkelId || "bengkel-001",
+        mekanikDiinginkan: form.mekanikDiinginkan.trim() || undefined,
+        mekanikId: form.mekanikId || undefined,
+        jenis: form.jenis === "Lainnya" ? jenisLainnya.trim() : form.jenis,
+        pelanggan: user?.nama || profil?.nama || "Pelanggan",
+        customerId: targetCustomerId,
+        vehicleId: form.vehicleId,
       });
+
+      toast.success(`Booking ${baru.nomor} dibuat — menunggu konfirmasi admin`);
+
+      const defaultKendaraan = kendaraanSaya[0];
+      setForm({
+        ...kosong,
+        vehicleId: defaultKendaraan ? defaultKendaraan.id : "",
+        kendaraan: defaultKendaraan ? labelKendaraan(defaultKendaraan) : "",
+        plat: defaultKendaraan ? defaultKendaraan.plat : "",
+      });
+    } catch (submitErr: any) {
+      console.error("[BookingPelanggan] Gagal menyimpan booking:", submitErr);
+      const errMsg =
+        submitErr?.message ||
+        submitErr?.error_description ||
+        "Gagal menyimpan data booking ke server.";
+      toast.error(`Booking Gagal: ${errMsg}`, {
+        description: "Permintaan booking belum tersimpan. Silakan periksa kembali atau muat ulang halaman.",
+        duration: 6000,
+      });
+    } finally {
+      setIsSubmitting(false);
+      isSubmittingRef.current = false;
     }
-
-    const { jenisLainnya, ...bookingForm } = form;
-    const baru = buatBooking({
-      ...bookingForm,
-      bengkelId: form.bengkelId || "bengkel-001",
-      mekanikDiinginkan: form.mekanikDiinginkan.trim() || undefined,
-      mekanikId: form.mekanikId || undefined,
-      jenis: form.jenis === "Lainnya" ? jenisLainnya.trim() : form.jenis,
-      pelanggan: user?.nama || profil?.nama || "Pelanggan",
-      customerId: targetCustomerId,
-      vehicleId: form.vehicleId,
-    });
-    toast.success(`Booking ${baru.nomor} dibuat — menunggu konfirmasi admin`);
-
-    const defaultKendaraan = kendaraanSaya[0];
-    setForm({
-      ...kosong,
-      vehicleId: defaultKendaraan ? defaultKendaraan.id : "",
-      kendaraan: defaultKendaraan ? labelKendaraan(defaultKendaraan) : "",
-      plat: defaultKendaraan ? defaultKendaraan.plat : "",
-    });
   };
 
   const milikSaya = useMemo(() => {
@@ -522,8 +545,16 @@ function BookingPelanggan() {
                     placeholder="Opsional"
                   />
                 </div>
-                <Button type="submit" className="w-full gap-2">
-                  <CalendarPlus className="size-4" /> Kirim Booking
+                <Button type="submit" disabled={isSubmitting} className="w-full gap-2">
+                  {isSubmitting ? (
+                    <>
+                      <RefreshCw className="size-4 animate-spin" /> Mengirim Booking...
+                    </>
+                  ) : (
+                    <>
+                      <CalendarPlus className="size-4" /> Kirim Booking
+                    </>
+                  )}
                 </Button>
               </form>
             )}

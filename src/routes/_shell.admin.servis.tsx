@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import {
   Plus,
   Pencil,
@@ -148,7 +148,7 @@ function ServisAdmin() {
     window.addEventListener("appbenk_pembayaran_updated", handleSync);
     window.addEventListener("appbenk_sparepart_updated", handleSync);
 
-    const interval = setInterval(handleSync, 12000);
+    const interval = setInterval(handleSync, 25000);
 
     return () => {
       window.removeEventListener("appbenk_servis_updated", handleSync);
@@ -167,6 +167,7 @@ function ServisAdmin() {
   const [hapus, setHapus] = useState<Servis | null>(null);
   const [pilihPart, setPilihPart] = useState("");
   const [loadingSimpan, setLoadingSimpan] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   // Modal Verifikasi Pembayaran
   const [verifModalOpen, setVerifModalOpen] = useState(false);
@@ -219,6 +220,7 @@ function ServisAdmin() {
 
   const bukaBaru = () => {
     setEdit(null);
+    setPilihPart("");
     setForm({
       ...kosong,
       mekanik: mekanikOpsi[0]?.nama || "Andi",
@@ -294,10 +296,12 @@ function ServisAdmin() {
 
   const simpan = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current || loadingSimpan) return;
     if (!form.pelanggan.trim() || !form.kendaraan.trim() || !form.keluhan.trim()) {
       toast.error("Pelanggan, kendaraan, dan keluhan wajib diisi.");
       return;
     }
+    isSubmittingRef.current = true;
     setLoadingSimpan(true);
     try {
       const estimasiSelesaiIso = form.estimasiSelesai
@@ -326,11 +330,15 @@ function ServisAdmin() {
       );
       toast.success(edit ? "Data servis berhasil diperbarui" : "Servis baru berhasil dibuat");
       setOpen(false);
+      setForm(kosong);
+      setEdit(null);
+      setPilihPart("");
     } catch (err: any) {
       console.error("Gagal simpan servis:", err);
       toast.error("Gagal menyimpan data servis: " + (err?.message || "Terjadi kesalahan"));
     } finally {
       setLoadingSimpan(false);
+      isSubmittingRef.current = false;
     }
   };
 
@@ -875,11 +883,27 @@ function ServisAdmin() {
               />
             </div>
             <DialogFooter className="sm:col-span-2">
-              <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={loadingSimpan}
+                onClick={() => {
+                  setOpen(false);
+                  setForm(kosong);
+                  setEdit(null);
+                  setPilihPart("");
+                }}
+              >
                 Batal
               </Button>
-              <Button type="submit" disabled={loadingSimpan}>
-                {loadingSimpan ? "Menyimpan..." : "Simpan"}
+              <Button type="submit" disabled={loadingSimpan} className="min-w-28 gap-2">
+                {loadingSimpan ? (
+                  <>
+                    <RefreshCw className="size-4 animate-spin" /> Menyimpan...
+                  </>
+                ) : (
+                  "Simpan"
+                )}
               </Button>
             </DialogFooter>
           </form>

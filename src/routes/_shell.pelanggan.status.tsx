@@ -45,8 +45,8 @@ function StatusPelanggan() {
     window.addEventListener("appbenk_booking_updated", handleSync);
     window.addEventListener("appbenk_pembayaran_updated", handleSync);
 
-    // Polling fallback setiap 10 detik saat pelanggan memantau progres servis
-    const interval = setInterval(handleSync, 10000);
+    // Polling fallback setiap 30 detik saat pelanggan memantau progres servis
+    const interval = setInterval(handleSync, 30000);
 
     return () => {
       window.removeEventListener("appbenk_servis_updated", handleSync);

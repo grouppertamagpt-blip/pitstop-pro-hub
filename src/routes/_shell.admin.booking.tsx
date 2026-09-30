@@ -101,7 +101,7 @@ function BookingAdmin() {
 
     window.addEventListener("appbenk_booking_updated", handleSync);
 
-    const interval = setInterval(handleSync, 8000);
+    const interval = setInterval(handleSync, 30000);
     return () => {
       window.removeEventListener("appbenk_booking_updated", handleSync);
       clearInterval(interval);

@@ -155,8 +155,8 @@ function AdminPembayaranPage() {
     window.addEventListener("appbenk_servis_updated", handleUpdateEvent);
     window.addEventListener("storage", handleUpdateEvent);
 
-    // Polling fallback 10 detik untuk memastikan verifikasi pembayaran selalu up-to-date
-    const interval = setInterval(handleUpdateEvent, 10000);
+    // Polling fallback 30 detik untuk memastikan verifikasi pembayaran selalu up-to-date
+    const interval = setInterval(handleUpdateEvent, 30000);
 
     return () => {
       window.removeEventListener("appbenk_pembayaran_updated", handleUpdateEvent);

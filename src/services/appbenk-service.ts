@@ -229,12 +229,13 @@ export const kendaraanService = {
 // 3. BOOKING SERVIS SERVICE
 // ----------------------------------------------------------------------------
 export const bookingService = {
-  async getAll(workshopId?: string): Promise<BookingServisRow[]> {
+  async getAll(workshopId?: string, limitCount = 100): Promise<BookingServisRow[]> {
     if (!isSupabaseConfigured()) return [];
     let query = supabase()
       .from("booking_servis")
       .select("*")
-      .order("tanggal_booking", { ascending: false });
+      .order("tanggal_booking", { ascending: false })
+      .limit(limitCount);
     if (workshopId) {
       query = query.or(`workshop_id.eq.${workshopId},id_bengkel.eq.${workshopId}`);
     }
@@ -293,11 +294,38 @@ export const bookingService = {
       };
     }
 
-    // Pastikan pelanggan ada di database Supabase untuk mencegah foreign key error
+    // Dapatkan data user auth yang sedang aktif
+    let currentAuthUser: any = null;
+    try {
+      const { data: authData } = await supabase().auth.getUser();
+      currentAuthUser = authData?.user;
+    } catch {}
+
+    // Debounce / pencegahan duplikasi request ganda pada booking yang identik
+    try {
+      const { data: recentDup } = await supabase()
+        .from("booking_servis")
+        .select("*")
+        .eq("id_pelanggan", payload.id_pelanggan)
+        .eq("id_kendaraan", payload.id_kendaraan)
+        .eq("tanggal_booking", payload.tanggal_booking)
+        .eq("waktu_booking", payload.waktu_booking)
+        .limit(1)
+        .maybeSingle();
+
+      if (recentDup) {
+        console.warn(
+          `[bookingService.create] Duplikasi booking terdeteksi (${recentDup.nomor_booking}). Mengembalikan data booking yang sudah ada.`,
+        );
+        return recentDup;
+      }
+    } catch {}
+
+    // Pastikan pelanggan ada di database Supabase dan tertaut dengan user_id auth
     try {
       const { data: existPel } = await supabase()
         .from("pelanggan")
-        .select("id_pelanggan")
+        .select("id_pelanggan, user_id, email")
         .eq("id_pelanggan", payload.id_pelanggan)
         .maybeSingle();
 
@@ -306,14 +334,26 @@ export const bookingService = {
           .from("pelanggan")
           .insert({
             id_pelanggan: payload.id_pelanggan,
+            user_id: currentAuthUser?.id ?? null,
             workshop_id: idBengkel,
             id_bengkel: idBengkel,
-            nama: "Pelanggan",
-            email: `${payload.id_pelanggan}@appbenk.local`,
+            nama: currentAuthUser?.user_metadata?.full_name || "Pelanggan",
+            email: currentAuthUser?.email || `${payload.id_pelanggan}@appbenk.local`,
+            no_hp: currentAuthUser?.user_metadata?.phone || null,
           });
+      } else if (
+        currentAuthUser?.id &&
+        (!existPel.user_id || existPel.user_id !== currentAuthUser.id)
+      ) {
+        try {
+          await supabase()
+            .from("pelanggan")
+            .update({ user_id: currentAuthUser.id })
+            .eq("id_pelanggan", existPel.id_pelanggan);
+        } catch {}
       }
     } catch (e) {
-      void e;
+      console.warn("[bookingService.create] Penyiapan entitas pelanggan:", e);
     }
 
     // Pastikan kendaraan ada di database Supabase untuk mencegah foreign key error
@@ -337,7 +377,7 @@ export const bookingService = {
         });
       }
     } catch (e) {
-      void e;
+      console.warn("[bookingService.create] Penyiapan entitas kendaraan:", e);
     }
 
     const { data, error } = await supabase()
@@ -350,7 +390,25 @@ export const bookingService = {
       })
       .select()
       .single();
-    if (error) throw error;
+
+    if (error) {
+      console.error("[bookingService.create] Gagal insert ke tabel booking_servis:", {
+        error,
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        authUserId: currentAuthUser?.id,
+        payload,
+      });
+
+      if (error.code === "42501") {
+        throw new Error(
+          "Izin penyimpanan booking ditolak oleh server (RLS Policy). Pastikan akun Anda sudah terverifikasi atau coba muat ulang halaman.",
+        );
+      }
+      throw new Error(`Gagal menyimpan booking ke server: ${error.message || "Kesalahan database"}`);
+    }
 
     if (data) {
       try {
@@ -414,9 +472,13 @@ export const bookingService = {
 // 4. SERVIS SERVICE
 // ----------------------------------------------------------------------------
 export const servisService = {
-  async getAll(workshopId?: string): Promise<ServisRow[]> {
+  async getAll(workshopId?: string, limitCount = 100): Promise<ServisRow[]> {
     if (!isSupabaseConfigured()) return [];
-    let query = supabase().from("servis").select("*").order("created_at", { ascending: false });
+    let query = supabase()
+      .from("servis")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(limitCount);
     if (workshopId) {
       query = query.eq("id_bengkel", workshopId);
     }
@@ -499,37 +561,93 @@ export const servisService = {
         updated_at: new Date().toISOString(),
       };
     }
+
+    // PENCEGAHAN DUPLIKASI: Jika servis dikaitkan dengan booking, pastikan 1 booking hanya memiliki 1 servis aktif
+    if (payload.id_booking) {
+      try {
+        const { data: existingServis } = await supabase()
+          .from("servis")
+          .select("*")
+          .eq("id_booking", payload.id_booking)
+          .limit(1)
+          .maybeSingle();
+
+        if (existingServis) {
+          console.warn(
+            `[servisService.create] Servis untuk booking ${payload.id_booking} sudah ada (${existingServis.nomor_servis}). Duplikasi dicegah.`,
+          );
+          return existingServis;
+        }
+      } catch (checkErr) {
+        console.warn("[servisService.create] Gagal cek existing servis booking:", checkErr);
+      }
+    }
+
     // Servis table in Supabase has id_bengkel, but does NOT have workshop_id
     const { workshop_id: _wId, ...restPayload } = payload;
     let insertPayload: any = {
       ...restPayload,
       id_servis: idServis,
       id_bengkel: idBengkel,
+      id_booking: payload.id_booking ?? null,
     };
     const initialRes = await supabase().from("servis").insert(insertPayload).select().single();
-    if (
-      initialRes.error &&
-      (initialRes.error.code === "23505" ||
-        initialRes.error.message?.includes("servis_nomor_servis_key"))
-    ) {
-      // Recovery otomatis jika nomor servis mengalami tabrakan sequence
-      const { data: existingRows } = await supabase().from("servis").select("nomor_servis");
-      let maxNum = 0;
-      if (existingRows) {
-        for (const r of existingRows) {
-          if (!r.nomor_servis) continue;
-          const parts = r.nomor_servis.split("-");
-          const num = parseInt(parts[parts.length - 1], 10);
-          if (!isNaN(num) && num > maxNum) maxNum = num;
-        }
+    if (initialRes.error) {
+      // 1. Cek tabrakan unique booking
+      if (
+        payload.id_booking &&
+        (initialRes.error.message?.includes("id_booking") ||
+          initialRes.error.message?.includes("idx_servis_unique") ||
+          initialRes.error.message?.includes("check_servis_booking_unique"))
+      ) {
+        const { data: existing } = await supabase()
+          .from("servis")
+          .select("*")
+          .eq("id_booking", payload.id_booking)
+          .limit(1)
+          .maybeSingle();
+        if (existing) return existing;
       }
-      const nextNomor = `SRV-2026-${String(maxNum + 1).padStart(4, "0")}`;
-      insertPayload = { ...insertPayload, nomor_servis: nextNomor };
-      const retryRes = await supabase().from("servis").insert(insertPayload).select().single();
-      if (retryRes.error) throw retryRes.error;
-      return retryRes.data;
+
+      // 2. Recovery otomatis jika nomor servis mengalami tabrakan sequence
+      if (
+        initialRes.error.code === "23505" ||
+        initialRes.error.message?.includes("servis_nomor_servis_key")
+      ) {
+        const { data: existingRows } = await supabase().from("servis").select("nomor_servis");
+        let maxNum = 0;
+        if (existingRows) {
+          for (const r of existingRows) {
+            if (!r.nomor_servis) continue;
+            const parts = r.nomor_servis.split("-");
+            const num = parseInt(parts[parts.length - 1], 10);
+            if (!isNaN(num) && num > maxNum) maxNum = num;
+          }
+        }
+        const nextNomor = `SRV-2026-${String(maxNum + 1).padStart(4, "0")}`;
+        insertPayload = { ...insertPayload, nomor_servis: nextNomor };
+        const retryRes = await supabase().from("servis").insert(insertPayload).select().single();
+        if (retryRes.error) {
+          if (
+            payload.id_booking &&
+            (retryRes.error.message?.includes("id_booking") ||
+              retryRes.error.message?.includes("idx_servis_unique"))
+          ) {
+            const { data: existing } = await supabase()
+              .from("servis")
+              .select("*")
+              .eq("id_booking", payload.id_booking)
+              .limit(1)
+              .maybeSingle();
+            if (existing) return existing;
+          }
+          throw retryRes.error;
+        }
+        return retryRes.data;
+      }
+
+      throw initialRes.error;
     }
-    if (initialRes.error) throw initialRes.error;
     return initialRes.data;
   },
 
@@ -3995,6 +4113,7 @@ export const adminInvitationService = {
     }
 
     const cleanNama = nama.trim();
+    const cleanEmail = email.trim().toLowerCase();
     const envAppUrl = (
       (typeof import.meta !== "undefined" && (import.meta as any).env?.["VITE_APP_URL"]) ||
       (typeof process !== "undefined" && (process.env?.["VITE_APP_URL"] || process.env?.["APP_URL"])) ||

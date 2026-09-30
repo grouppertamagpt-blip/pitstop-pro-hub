@@ -238,11 +238,52 @@ type AuthCtx = {
 
 const Ctx = createContext<AuthCtx | null>(null);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<SessionUser | null>(null);
-  const [loading, setLoading] = useState(true);
+const profileCache = new Map<string, { user: SessionUser; timestamp: number }>();
+const inFlightProfiles = new Map<string, Promise<SessionUser | null>>();
+const CACHE_TTL_MS = 60000; // 60 detik caching lokal
 
-  const loadProfile = async (id: string): Promise<SessionUser | null> => {
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<SessionUser | null>(() => {
+    try {
+      const cached = localStorage.getItem("appbenk.auth.session_user");
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return null;
+  });
+  const [loading, setLoading] = useState<boolean>(() => {
+    try {
+      return !localStorage.getItem("appbenk.auth.session_user");
+    } catch {
+      return true;
+    }
+  });
+
+  const persistUser = (nextUser: SessionUser | null) => {
+    setUser(nextUser);
+    try {
+      if (nextUser) {
+        localStorage.setItem("appbenk.auth.session_user", JSON.stringify(nextUser));
+      } else {
+        localStorage.removeItem("appbenk.auth.session_user");
+      }
+    } catch {}
+  };
+
+  const loadProfile = async (id: string, force = false): Promise<SessionUser | null> => {
+    const now = Date.now();
+    if (!force) {
+      const cached = profileCache.get(id);
+      if (cached && now - cached.timestamp < CACHE_TTL_MS) {
+        return cached.user;
+      }
+    }
+
+    if (inFlightProfiles.has(id)) {
+      return inFlightProfiles.get(id)!;
+    }
+
+    const fetchPromise = (async () => {
+      try {
     const client = supabase();
     const { data, error } = await client
       .from("profiles")
@@ -432,6 +473,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ...(data.avatar_url ? { avatarUrl: data.avatar_url } : {}),
         ...(resolvedRole === "pelanggan" ? { pelanggan: displayName } : {}),
       };
+      profileCache.set(id, { user: payload, timestamp: Date.now() });
       return payload;
     }
 
@@ -549,6 +591,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             ...(created.avatar_url ? { avatarUrl: created.avatar_url } : {}),
             ...(metaRole === "pelanggan" ? { pelanggan: created.full_name || metaName } : {}),
           };
+          profileCache.set(id, { user: payload, timestamp: Date.now() });
           return payload;
         }
       }
@@ -556,49 +599,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // abaikan error fallback
     }
 
-    return null;
-  };
+      return null;
+    } finally {
+      inFlightProfiles.delete(id);
+    }
+  })();
+
+  inFlightProfiles.set(id, fetchPromise);
+  return fetchPromise;
+};
 
   useEffect(() => {
     let live = true;
+    let subscription: any = null;
+
     try {
       const client = supabase();
-      client.auth
-        .getSession()
-        .then(async ({ data }) => {
-          if (live && data?.session?.user?.id) {
-            try {
-              const loaded = await loadProfile(data.session.user.id);
-              if (live) setUser(loaded);
-            } catch (err) {
-              console.warn("[Auth] Gagal loadProfile:", err);
-            }
-          }
-          if (live) setLoading(false);
-        })
-        .catch((err) => {
-          console.warn("[Auth] Gagal getSession:", err);
-          if (live) setLoading(false);
-        });
 
       const { data: listener } = client.auth.onAuthStateChange(async (_event, session) => {
         if (!live) return;
         if (session?.user?.id) {
           try {
             const loaded = await loadProfile(session.user.id);
-            if (live) setUser(loaded);
+            if (live) persistUser(loaded);
           } catch {
-            if (live) setUser(null);
+            if (live) persistUser(null);
           }
         } else {
-          setUser(null);
+          if (live) persistUser(null);
         }
-        setLoading(false);
+        if (live) setLoading(false);
       });
+
+      subscription = listener?.subscription;
+
+      // Hanya jalankan fallback getSession jika user belum tersedia di state/cache
+      if (!user) {
+        client.auth
+          .getSession()
+          .then(async ({ data }) => {
+            if (!live) return;
+            if (data?.session?.user?.id) {
+              try {
+                const loaded = await loadProfile(data.session.user.id);
+                if (live) persistUser(loaded);
+              } catch (err) {
+                console.warn("[Auth] Gagal loadProfile:", err);
+              }
+            }
+            if (live) setLoading(false);
+          })
+          .catch((err) => {
+            console.warn("[Auth] Gagal getSession:", err);
+            if (live) setLoading(false);
+          });
+      } else {
+        setLoading(false);
+      }
 
       return () => {
         live = false;
-        listener?.subscription?.unsubscribe();
+        if (subscription) {
+          subscription.unsubscribe();
+        }
       };
     } catch (err) {
       console.warn("[Auth] Gagal inisialisasi sesi auth:", err);
@@ -616,12 +679,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           password,
         });
         if (error || !data.user) return { error: error?.message ?? "Login gagal." };
-        const sessionUser = await loadProfile(data.user.id);
+        const sessionUser = await loadProfile(data.user.id, true);
         if (!sessionUser) {
           await supabase().auth.signOut();
           return { error: "Profil akun tidak ditemukan. Hubungi administrator." };
         }
-        setUser(sessionUser);
+        persistUser(sessionUser);
         return { user: sessionUser };
       },
       daftar: async ({ nama, email, telepon, gender, password }) => {
@@ -707,8 +770,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { ok: true };
       },
       keluar: async () => {
+        profileCache.clear();
         await supabase().auth.signOut();
-        setUser(null);
+        persistUser(null);
       },
       aktifkanPremium: () =>
         setUser((u) => {

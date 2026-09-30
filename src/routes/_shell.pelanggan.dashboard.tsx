@@ -55,7 +55,7 @@ function DashboardPelanggan() {
     window.addEventListener("appbenk_servis_updated", handleSync);
     window.addEventListener("appbenk_pembayaran_updated", handleSync);
 
-    const interval = setInterval(handleSync, 10000);
+    const interval = setInterval(handleSync, 35000);
     return () => {
       window.removeEventListener("appbenk_booking_updated", handleSync);
       window.removeEventListener("appbenk_servis_updated", handleSync);

@@ -1312,7 +1312,7 @@ type Store = {
   refreshBengkel: () => Promise<void>;
   mekanik: Mekanik[];
   supplier: Supplier[];
-  simpanPelanggan: (p: Omit<Pelanggan, "id"> & { id?: string }) => void;
+  simpanPelanggan: (p: Omit<Pelanggan, "id"> & { id?: string }) => Promise<void>;
   hapusPelanggan: (id: string) => void;
   refreshPelanggan: () => Promise<void>;
   simpanKendaraan: (k: Omit<Kendaraan, "id"> & { id?: string }) => Promise<void>;
@@ -1354,7 +1354,7 @@ type Store = {
   refreshRiwayatStok: () => Promise<void>;
   refreshPenggunaan: () => Promise<void>;
   refreshSparepart: () => Promise<void>;
-  buatBooking: (b: Omit<Booking, "id" | "nomor" | "status">) => Booking;
+  buatBooking: (b: Omit<Booking, "id" | "nomor" | "status">) => Promise<Booking>;
   ubahStatusBooking: (id: string, status: StatusBooking, alasan?: string) => void;
   tugaskanMekanikBooking: (id: string, mekanik: string) => void;
   aturEstimasiBooking: (id: string, estimasiSelesai: string) => void;
@@ -1402,6 +1402,21 @@ const bacaData = <T,>(kunci: string, fallback: T): T => {
     return fallback;
   }
 };
+
+// Throttling & In-flight request caching untuk optimasi koneksi Supabase & pencegahan query berulang
+let lastRefreshServisTime = 0;
+let inFlightRefreshServis: Promise<void> | null = null;
+
+let lastRefreshBookingTime = 0;
+let inFlightRefreshBooking: Promise<void> | null = null;
+
+let lastRefreshSparepartTime = 0;
+let inFlightRefreshSparepart: Promise<void> | null = null;
+
+let lastRefreshMekanikTime = 0;
+let inFlightRefreshMekanik: Promise<void> | null = null;
+
+const REFRESH_COOLDOWN_MS = 6000;
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -2425,7 +2440,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return baru;
       },
 
-      simpanPelanggan: (p) => {
+      simpanPelanggan: async (p) => {
         const isExisting = Boolean(p.id && pelanggan.some((x) => x.id === p.id));
         const id = p.id || uid();
         setPelanggan((list) =>
@@ -2434,26 +2449,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             : [{ ...p, id } as Pelanggan, ...list],
         );
         if (isSupabaseConfigured()) {
-          if (isExisting && p.id) {
-            pelangganService
-              .update(p.id, {
+          try {
+            if (isExisting && p.id) {
+              await pelangganService.update(p.id, {
                 nama: p.nama,
                 email: p.email,
                 ...(p.telepon ? { no_hp: p.telepon } : {}),
                 ...(p.alamat ? { alamat: p.alamat } : {}),
-              })
-              .catch(() => {});
-          } else {
-            pelangganService
-              .create({
+              });
+            } else {
+              await pelangganService.create({
                 ...(p.id ? { id_pelanggan: p.id } : {}),
                 ...(p.userId ? { user_id: p.userId } : {}),
                 nama: p.nama,
                 email: p.email,
                 ...(p.telepon ? { no_hp: p.telepon } : {}),
                 ...(p.alamat ? { alamat: p.alamat } : {}),
-              })
-              .catch(() => {});
+              });
+            }
+          } catch (err) {
+            console.error("Gagal menyimpan data pelanggan ke Supabase:", err);
           }
         }
       },
@@ -2677,6 +2692,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 id_pelanggan: p.id_pelanggan,
                 id_kendaraan: k.id_kendaraan,
                 id_bengkel: s.bengkelId || "bengkel-001",
+                id_booking: s.bookingId ?? (s as any).id_booking ?? undefined,
                 id_mekanik: idMekanik ?? null,
                 mekanik: s.mekanik,
                 jenis_servis: s.jenis,
@@ -2772,6 +2788,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               // CREATE SERVIS BARU
               const createdServis = await servisService.create({
                 id_servis: s.id,
+                id_booking: s.bookingId ?? (s as any).id_booking ?? null,
                 id_bengkel: s.bengkelId || "bengkel-001",
                 id_mekanik: idMekanik,
                 nomor_servis: finalNomor,
@@ -3503,100 +3520,110 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       },
       refreshBooking: async () => {
         if (!isSupabaseConfigured()) return;
-        try {
-          const [bkRes, pelRes, kenRes] = await Promise.all([
-            bookingService.getAll(),
-            pelangganService.getAll(),
-            kendaraanService.getAll(),
-          ]);
-          if (bkRes.length > 0) {
-            const mapped = bkRes.map((b) => {
-              const pel = pelRes.find((p) => p.id_pelanggan === b.id_pelanggan);
-              const ken = kenRes.find((k) => k.id_kendaraan === b.id_kendaraan);
-              return {
-                id: b.id_booking,
-                nomor: b.nomor_booking,
-                pelanggan: pel?.nama ?? "Pelanggan",
-                customerId: b.id_pelanggan,
-                vehicleId: b.id_kendaraan,
-                bengkelId: b.id_bengkel ?? "bengkel-001",
-                mekanikId: b.id_mekanik ?? undefined,
-                kendaraan: ken ? `${ken.merk} ${ken.tipe} ${ken.tahun}` : "Kendaraan",
-                plat: ken?.nopol ?? "",
-                jenis: b.jenis_servis,
-                keluhan: b.keluhan,
-                tanggal: b.tanggal_booking,
-                waktu: b.waktu_booking,
-                catatan: "",
-                mekanikDiinginkan: b.mekanik_diinginkan ?? undefined,
-                status:
-                  b.status_booking === "disetujui"
-                    ? ("Diterima" as StatusBooking)
-                    : b.status_booking === "ditolak"
-                      ? ("Ditolak" as StatusBooking)
-                      : ("Menunggu Konfirmasi" as StatusBooking),
-                alasanTolak: b.alasan_penolakan ?? undefined,
-              };
-            });
-            setBooking((currentLocal) => {
-              const localOnly = currentLocal.filter(
-                (loc) => !mapped.some((sb) => sb.id === loc.id || sb.nomor === loc.nomor),
-              );
-              return [...localOnly, ...mapped];
-            });
+        const now = Date.now();
+        if (inFlightRefreshBooking) return inFlightRefreshBooking;
+        if (now - lastRefreshBookingTime < REFRESH_COOLDOWN_MS) return;
+        lastRefreshBookingTime = now;
 
-            // Sinkronisasi otomatis notifikasi pelanggan dari data status booking
-            setNotifikasi((prevNotif) => {
-              let updated = [...prevNotif];
-              for (const bk of mapped) {
-                if (bk.status === "Diterima") {
-                  const exists = updated.some(
-                    (n) => n.bookingId === bk.id && n.statusBooking === "Diterima",
-                  );
-                  if (!exists) {
-                    updated.unshift({
-                      id: `notif-bk-terima-${bk.id}`,
-                      role: "pelanggan",
-                      tipe: "booking",
-                      judul: `Booking Diterima (${bk.nomor})`,
-                      pesan: "bookingan diterima silahkan datang ke bengkel",
-                      link: "/pelanggan/status",
-                      waktu: new Date().toISOString(),
-                      dibaca: false,
-                      bookingId: bk.id,
-                      customerId: bk.customerId,
-                      pelanggan: bk.pelanggan,
-                      statusBooking: "Diterima",
-                    });
-                  }
-                } else if (bk.status === "Ditolak") {
-                  const exists = updated.some(
-                    (n) => n.bookingId === bk.id && n.statusBooking === "Ditolak",
-                  );
-                  if (!exists) {
-                    updated.unshift({
-                      id: `notif-bk-tolak-${bk.id}`,
-                      role: "pelanggan",
-                      tipe: "booking",
-                      judul: `Booking Ditolak (${bk.nomor})`,
-                      pesan: bk.alasanTolak || "Tidak ada keterangan dari admin.",
-                      link: "/pelanggan/booking",
-                      waktu: new Date().toISOString(),
-                      dibaca: false,
-                      bookingId: bk.id,
-                      customerId: bk.customerId,
-                      pelanggan: bk.pelanggan,
-                      statusBooking: "Ditolak",
-                    });
+        inFlightRefreshBooking = (async () => {
+          try {
+            const [bkRes, pelRes, kenRes] = await Promise.all([
+              bookingService.getAll(),
+              pelangganService.getAll(),
+              kendaraanService.getAll(),
+            ]);
+            if (bkRes.length > 0) {
+              const mapped = bkRes.map((b) => {
+                const pel = pelRes.find((p) => p.id_pelanggan === b.id_pelanggan);
+                const ken = kenRes.find((k) => k.id_kendaraan === b.id_kendaraan);
+                return {
+                  id: b.id_booking,
+                  nomor: b.nomor_booking,
+                  pelanggan: pel?.nama ?? "Pelanggan",
+                  customerId: b.id_pelanggan,
+                  vehicleId: b.id_kendaraan,
+                  bengkelId: b.id_bengkel ?? "bengkel-001",
+                  mekanikId: b.id_mekanik ?? undefined,
+                  kendaraan: ken ? `${ken.merk} ${ken.tipe} ${ken.tahun}` : "Kendaraan",
+                  plat: ken?.nopol ?? "",
+                  jenis: b.jenis_servis,
+                  keluhan: b.keluhan,
+                  tanggal: b.tanggal_booking,
+                  waktu: b.waktu_booking,
+                  catatan: "",
+                  mekanikDiinginkan: b.mekanik_diinginkan ?? undefined,
+                  status:
+                    b.status_booking === "disetujui"
+                      ? ("Diterima" as StatusBooking)
+                      : b.status_booking === "ditolak"
+                        ? ("Ditolak" as StatusBooking)
+                        : ("Menunggu Konfirmasi" as StatusBooking),
+                  alasanTolak: b.alasan_penolakan ?? undefined,
+                };
+              });
+              setBooking((currentLocal) => {
+                const localOnly = currentLocal.filter(
+                  (loc) => !mapped.some((sb) => sb.id === loc.id || sb.nomor === loc.nomor),
+                );
+                return [...localOnly, ...mapped];
+              });
+
+              // Sinkronisasi otomatis notifikasi pelanggan dari data status booking
+              setNotifikasi((prevNotif) => {
+                let updated = [...prevNotif];
+                for (const bk of mapped) {
+                  if (bk.status === "Diterima") {
+                    const exists = updated.some(
+                      (n) => n.bookingId === bk.id && n.statusBooking === "Diterima",
+                    );
+                    if (!exists) {
+                      updated.unshift({
+                        id: `notif-bk-terima-${bk.id}`,
+                        role: "pelanggan",
+                        tipe: "booking",
+                        judul: `Booking Diterima (${bk.nomor})`,
+                        pesan: "bookingan diterima silahkan datang ke bengkel",
+                        link: "/pelanggan/status",
+                        waktu: new Date().toISOString(),
+                        dibaca: false,
+                        bookingId: bk.id,
+                        customerId: bk.customerId,
+                        pelanggan: bk.pelanggan,
+                        statusBooking: "Diterima",
+                      });
+                    }
+                  } else if (bk.status === "Ditolak") {
+                    const exists = updated.some(
+                      (n) => n.bookingId === bk.id && n.statusBooking === "Ditolak",
+                    );
+                    if (!exists) {
+                      updated.unshift({
+                        id: `notif-bk-tolak-${bk.id}`,
+                        role: "pelanggan",
+                        tipe: "booking",
+                        judul: `Booking Ditolak (${bk.nomor})`,
+                        pesan: bk.alasanTolak || "Tidak ada keterangan dari admin.",
+                        link: "/pelanggan/booking",
+                        waktu: new Date().toISOString(),
+                        dibaca: false,
+                        bookingId: bk.id,
+                        customerId: bk.customerId,
+                        pelanggan: bk.pelanggan,
+                        statusBooking: "Ditolak",
+                      });
+                    }
                   }
                 }
-              }
-              return updated;
-            });
+                return updated;
+              });
+            }
+          } catch (err) {
+            console.error("Gagal refresh booking:", err);
+          } finally {
+            inFlightRefreshBooking = null;
           }
-        } catch (err) {
-          console.error("Gagal refresh booking:", err);
-        }
+        })();
+        return inFlightRefreshBooking;
       },
       refreshRetur: async () => {
         if (!isSupabaseConfigured()) return;
@@ -3698,217 +3725,240 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       },
       refreshServis: async () => {
         if (!isSupabaseConfigured()) return;
-        try {
-          const [srvRes, pelRes, kenRes, detRes, spRes, bkRes] = await Promise.all([
-            servisService.getAll(),
-            pelangganService.getAll(),
-            kendaraanService.getAll(),
-            supabase().from("detail_servis").select("*"),
-            sparepartService.getAll(),
-            bookingService.getAll(),
-          ]);
+        const now = Date.now();
+        if (inFlightRefreshServis) return inFlightRefreshServis;
+        if (now - lastRefreshServisTime < REFRESH_COOLDOWN_MS) return;
+        lastRefreshServisTime = now;
 
-          const detList: any[] = detRes && (detRes as any).data ? (detRes as any).data : [];
-          const spList: any[] = spRes ?? [];
-          const bkList: any[] = bkRes ?? [];
+        inFlightRefreshServis = (async () => {
+          try {
+            const [srvRes, pelRes, kenRes, detRes, spRes, bkRes] = await Promise.all([
+              servisService.getAll(150),
+              pelangganService.getAll(),
+              kendaraanService.getAll(),
+              supabase().from("detail_servis").select("*").limit(500),
+              sparepartService.getAll(),
+              bookingService.getAll(100),
+            ]);
 
-          const mappedServis: Servis[] = (srvRes ?? []).map((s: any) => {
-            const pel = pelRes.find((p: any) => p.id_pelanggan === s.id_pelanggan);
-            const ken = kenRes.find((k: any) => k.id_kendaraan === s.id_kendaraan);
-            const bk = bkList.find((b: any) => b.id_booking === s.id_booking);
-            const pelFromBk = bk ? pelRes.find((p: any) => p.id_pelanggan === bk.id_pelanggan) : undefined;
-            const namaPelanggan =
-              pel?.nama ||
-              pelFromBk?.nama ||
-              s.pelanggan ||
-              "Pelanggan";
-            const targetPelangganId = s.id_pelanggan || pel?.id_pelanggan || pelFromBk?.id_pelanggan || bk?.id_pelanggan || undefined;
-            const targetUserId = pel?.user_id || pelFromBk?.user_id || undefined;
-            const kenDesc = ken
-              ? `${ken.merk} ${ken.tipe} ${ken.tahun}`.trim()
-              : (bk ? `${bk.jenis_servis || "Kendaraan"}` : "Kendaraan");
-            const plat = ken?.nopol || ken?.plat || "";
+            const detList: any[] = detRes && (detRes as any).data ? (detRes as any).data : [];
+            const spList: any[] = spRes ?? [];
+            const bkList: any[] = bkRes ?? [];
 
-            const rawStatus = (s.status_servis || "").toLowerCase();
-            const st: StatusServis =
-              rawStatus === "diproses" || rawStatus === "dikerjakan" || rawStatus === "menunggu_sparepart" || rawStatus === "proses"
-                ? "Diproses"
-                : rawStatus === "selesai"
-                  ? "Selesai"
-                  : rawStatus === "menunggu_pembayaran"
-                    ? "Menunggu Pembayaran"
-                    : rawStatus === "lunas" || rawStatus === "selesai dibayar"
-                      ? "Selesai Dibayar"
-                      : rawStatus === "booking"
-                        ? "Booking"
-                        : "Menunggu";
+            const mappedServis: Servis[] = (srvRes ?? []).map((s: any) => {
+              const pel = pelRes.find((p: any) => p.id_pelanggan === s.id_pelanggan);
+              const ken = kenRes.find((k: any) => k.id_kendaraan === s.id_kendaraan);
+              const bk = bkList.find((b: any) => b.id_booking === s.id_booking);
+              const pelFromBk = bk ? pelRes.find((p: any) => p.id_pelanggan === bk.id_pelanggan) : undefined;
+              const namaPelanggan =
+                pel?.nama ||
+                pelFromBk?.nama ||
+                s.pelanggan ||
+                "Pelanggan";
+              const targetPelangganId = s.id_pelanggan || pel?.id_pelanggan || pelFromBk?.id_pelanggan || bk?.id_pelanggan || undefined;
+              const targetUserId = pel?.user_id || pelFromBk?.user_id || undefined;
+              const kenDesc = ken
+                ? `${ken.merk} ${ken.tipe} ${ken.tahun}`.trim()
+                : (bk ? `${bk.jenis_servis || "Kendaraan"}` : "Kendaraan");
+              const plat = ken?.nopol || ken?.plat || "";
 
-            const srvDetails = detList.filter((d: any) => d.id_servis === s.id_servis);
-            const items: ItemPart[] = srvDetails.map((d: any) => {
-              const sp = spList.find((x: any) => x.id_sparepart === d.id_sparepart);
+              const rawStatus = (s.status_servis || "").toLowerCase();
+              const st: StatusServis =
+                rawStatus === "diproses" || rawStatus === "dikerjakan" || rawStatus === "menunggu_sparepart" || rawStatus === "proses"
+                  ? "Diproses"
+                  : rawStatus === "selesai"
+                    ? "Selesai"
+                    : rawStatus === "menunggu_pembayaran"
+                      ? "Menunggu Pembayaran"
+                      : rawStatus === "lunas" || rawStatus === "selesai dibayar"
+                        ? "Selesai Dibayar"
+                        : rawStatus === "booking"
+                          ? "Booking"
+                          : "Menunggu";
+
+              const srvDetails = detList.filter((d: any) => d.id_servis === s.id_servis);
+              const items: ItemPart[] = srvDetails.map((d: any) => {
+                const sp = spList.find((x: any) => x.id_sparepart === d.id_sparepart);
+                return {
+                  sparepartId: d.id_sparepart || d.id_detail || d.id_detail_servis,
+                  kode: sp?.id_sparepart || d.id_sparepart || "-",
+                  nama: sp?.nama_sparepart || d.keterangan || "Sparepart",
+                  harga: Number(d.harga || d.harga_satuan || sp?.harga || 0),
+                  jumlah: Number(d.jumlah || d.qty || 1),
+                };
+              });
+              const ringkas = items.map((i) => `${i.nama} (${i.jumlah}x)`).join(", ");
+              const totalPartCalc = items.reduce((sum, i) => sum + i.harga * i.jumlah, 0);
+
               return {
-                sparepartId: d.id_sparepart || d.id_detail || d.id_detail_servis,
-                kode: sp?.id_sparepart || d.id_sparepart || "-",
-                nama: sp?.nama_sparepart || d.keterangan || "Sparepart",
-                harga: Number(d.harga || d.harga_satuan || sp?.harga || 0),
-                jumlah: Number(d.jumlah || d.qty || 1),
+                id: s.id_servis,
+                nomor: s.nomor_servis,
+                bookingId: s.id_booking ?? undefined,
+                pelanggan: namaPelanggan,
+                pelangganId: targetPelangganId,
+                customerId: targetPelangganId,
+                userId: targetUserId,
+                kendaraan: kenDesc,
+                plat: plat,
+                bengkelId: s.id_bengkel ?? "bengkel-001",
+                mekanikId: s.id_mekanik ?? undefined,
+                jenis: s.jenis_servis ?? "Servis Umum",
+                keluhan: s.keluhan ?? "",
+                pekerjaan: s.pekerjaan || s.catatan || s.jenis_servis || "",
+                mekanik: s.mekanik ?? "Andi",
+                tanggal: s.tanggal_servis || (s.created_at ? s.created_at.slice(0, 10) : hariIni()),
+                status: st,
+                sparepart: ringkas,
+                items: items,
+                catatan: s.catatan ?? "",
+                biayaJasa: Number(s.biaya_jasa || 0),
+                biayaPart: Number(s.biaya_sparepart || totalPartCalc || 0),
+                total: Number(s.total_biaya || 0),
+                noTransaksi: `TRX-${s.nomor_servis.replace("SRV-", "")}`,
+                estimasiBiaya: s.estimasi_biaya ? Number(s.estimasi_biaya) : undefined,
+                estimasiWaktu: s.estimasi_waktu ?? s.estimasi_durasi ?? undefined,
+                estimasiDurasi: s.estimasi_waktu ?? s.estimasi_durasi ?? undefined,
+                estimasiSelesai: s.estimasi_selesai ?? undefined,
+                tanggalMulai: s.tanggal_mulai ?? undefined,
+                tanggalSelesai: s.tanggal_selesai ?? undefined,
               };
             });
-            const ringkas = items.map((i) => `${i.nama} (${i.jumlah}x)`).join(", ");
-            const totalPartCalc = items.reduce((sum, i) => sum + i.harga * i.jumlah, 0);
 
-            return {
-              id: s.id_servis,
-              nomor: s.nomor_servis,
-              bookingId: s.id_booking ?? undefined,
-              pelanggan: namaPelanggan,
-              pelangganId: targetPelangganId,
-              customerId: targetPelangganId,
-              userId: targetUserId,
-              kendaraan: kenDesc,
-              plat: plat,
-              bengkelId: s.id_bengkel ?? "bengkel-001",
-              mekanikId: s.id_mekanik ?? undefined,
-              jenis: s.jenis_servis ?? "Servis Umum",
-              keluhan: s.keluhan ?? "",
-              pekerjaan: s.pekerjaan || s.catatan || s.jenis_servis || "",
-              mekanik: s.mekanik ?? "Andi",
-              tanggal: s.tanggal_servis || (s.created_at ? s.created_at.slice(0, 10) : hariIni()),
-              status: st,
-              sparepart: ringkas,
-              items: items,
-              catatan: s.catatan ?? "",
-              biayaJasa: Number(s.biaya_jasa || 0),
-              biayaPart: Number(s.biaya_sparepart || totalPartCalc || 0),
-              total: Number(s.total_biaya || 0),
-              noTransaksi: `TRX-${s.nomor_servis.replace("SRV-", "")}`,
-              estimasiBiaya: s.estimasi_biaya ? Number(s.estimasi_biaya) : undefined,
-              estimasiWaktu: s.estimasi_waktu ?? s.estimasi_durasi ?? undefined,
-              estimasiDurasi: s.estimasi_waktu ?? s.estimasi_durasi ?? undefined,
-              estimasiSelesai: s.estimasi_selesai ?? undefined,
-              tanggalMulai: s.tanggal_mulai ?? undefined,
-              tanggalSelesai: s.tanggal_selesai ?? undefined,
-            };
-          });
+            // Auto-healing: Jika ada booking berstatus 'disetujui' di Supabase yang belum memiliki data servis
+            const approvedBk = bkList.filter((b: any) => b.status_booking === "disetujui");
+            for (const ab of approvedBk) {
+              const alreadyInServis =
+                mappedServis.some((ms) => ms.bookingId === ab.id_booking) ||
+                (srvRes ?? []).some((s: any) => s.id_booking === ab.id_booking);
+              if (!alreadyInServis) {
+                try {
+                  // Cek ke DB langsung agar tidak ada duplikasi race condition
+                  const { data: existingSrv } = await supabase()
+                    .from("servis")
+                    .select("id_servis, nomor_servis")
+                    .eq("id_booking", ab.id_booking)
+                    .maybeSingle();
 
-          // Auto-healing: Jika ada booking berstatus 'disetujui' di Supabase yang belum memiliki data servis
-          const approvedBk = bkList.filter((b: any) => b.status_booking === "disetujui");
-          for (const ab of approvedBk) {
-            const alreadyInServis = mappedServis.some((ms) => ms.bookingId === ab.id_booking);
-            if (!alreadyInServis) {
-              try {
-                const nextNomor = generateNextNomorServis(mappedServis);
-                const srvId = `srv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-                const pel = pelRes.find((p: any) => p.id_pelanggan === ab.id_pelanggan);
-                const ken = kenRes.find((k: any) => k.id_kendaraan === ab.id_kendaraan);
-                const namaPel = pel?.nama || "Pelanggan";
-                const descKen = ken ? `${ken.merk} ${ken.tipe} ${ken.tahun}`.trim() : "Kendaraan";
-                const nopol = ken?.nopol || "";
+                  if (existingSrv) {
+                    continue;
+                  }
 
-                const created = await servisService.create({
-                  id_servis: srvId,
-                  nomor_servis: nextNomor,
-                  id_booking: ab.id_booking,
-                  id_bengkel: ab.id_bengkel || "bengkel-001",
-                  id_pelanggan: ab.id_pelanggan,
-                  id_kendaraan: ab.id_kendaraan,
-                  id_mekanik: ab.id_mekanik ?? undefined,
-                  mekanik: ab.mekanik_diinginkan || "Andi",
-                  jenis_servis: ab.jenis_servis,
-                  keluhan: ab.keluhan,
-                  pekerjaan: ab.jenis_servis,
-                  status_servis: "menunggu",
-                  tanggal_mulai: ab.tanggal_booking || hariIni(),
-                  estimasi_waktu: "1 - 2 Jam",
-                  catatan: `[Booking ${ab.nomor_booking}] ${ab.keluhan}`,
-                  biaya_jasa: 0,
-                  biaya_sparepart: 0,
-                  total_biaya: 0,
-                });
+                  const nextNomor = generateNextNomorServis(mappedServis);
+                  const srvId = `srv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+                  const pel = pelRes.find((p: any) => p.id_pelanggan === ab.id_pelanggan);
+                  const ken = kenRes.find((k: any) => k.id_kendaraan === ab.id_kendaraan);
+                  const namaPel = pel?.nama || "Pelanggan";
+                  const descKen = ken ? `${ken.merk} ${ken.tipe} ${ken.tahun}`.trim() : "Kendaraan";
+                  const nopol = ken?.nopol || "";
 
-                if (created) {
-                  mappedServis.unshift({
-                    id: created.id_servis,
-                    nomor: created.nomor_servis,
-                    bookingId: ab.id_booking,
-                    pelanggan: namaPel,
-                    pelangganId: ab.id_pelanggan,
-                    customerId: ab.id_pelanggan,
-                    userId: pel?.user_id,
-                    kendaraan: descKen,
-                    plat: nopol,
-                    bengkelId: created.id_bengkel || "bengkel-001",
-                    mekanikId: created.id_mekanik ?? undefined,
-                    jenis: created.jenis_servis || ab.jenis_servis,
-                    keluhan: created.keluhan || ab.keluhan,
-                    pekerjaan: created.pekerjaan || ab.jenis_servis,
-                    mekanik: created.mekanik || "Andi",
-                    tanggal: created.tanggal_servis || ab.tanggal_booking || hariIni(),
-                    status: "Menunggu",
-                    sparepart: "",
-                    items: [],
-                    catatan: created.catatan || "",
-                    biayaJasa: 0,
-                    biayaPart: 0,
-                    total: 0,
-                    noTransaksi: `TRX-${created.nomor_servis.replace("SRV-", "")}`,
+                  const created = await servisService.create({
+                    id_servis: srvId,
+                    nomor_servis: nextNomor,
+                    id_booking: ab.id_booking,
+                    id_bengkel: ab.id_bengkel || "bengkel-001",
+                    id_pelanggan: ab.id_pelanggan,
+                    id_kendaraan: ab.id_kendaraan,
+                    id_mekanik: ab.id_mekanik ?? undefined,
+                    mekanik: ab.mekanik_diinginkan || "Andi",
+                    jenis_servis: ab.jenis_servis,
+                    keluhan: ab.keluhan,
+                    pekerjaan: ab.jenis_servis,
+                    status_servis: "menunggu",
+                    tanggal_mulai: ab.tanggal_booking || hariIni(),
+                    estimasi_waktu: "1 - 2 Jam",
+                    catatan: `[Booking ${ab.nomor_booking}] ${ab.keluhan}`,
+                    biaya_jasa: 0,
+                    biaya_sparepart: 0,
+                    total_biaya: 0,
                   });
-                }
-              } catch (healErr) {
-                console.warn("Auto-heal booking to servis failed:", healErr);
-              }
-            }
-          }
 
-          if (mappedServis.length > 0) {
-            setServis((currentLocal) => {
-              const localOnly = currentLocal.filter(
-                (loc) =>
-                  !mappedServis.some(
-                    (sb) =>
-                      sb.id === loc.id ||
-                      sb.nomor === loc.nomor ||
-                      (loc.bookingId && sb.bookingId === loc.bookingId),
-                  ),
-              );
-              return [...localOnly, ...mappedServis];
-            });
-
-            // Sinkronkan data penggunaan sparepart dari servis
-            const usageFromServis: PenggunaanSparepart[] = [];
-            for (const s of mappedServis) {
-              if (s.items && s.items.length > 0) {
-                for (const it of s.items) {
-                  usageFromServis.push({
-                    id: `det-${s.id}-${it.sparepartId}`,
-                    sparepartId: it.sparepartId,
-                    servisId: s.id,
-                    servisNomor: s.nomor,
-                    tanggal: s.tanggal,
-                    jumlah: it.jumlah,
-                    mekanik: s.mekanik,
-                    pelanggan: s.pelanggan,
-                    statusServis: s.status,
-                    keterangan: s.pekerjaan || s.catatan || `Servis ${s.nomor}`,
-                  });
+                  if (created) {
+                    mappedServis.unshift({
+                      id: created.id_servis,
+                      nomor: created.nomor_servis,
+                      bookingId: ab.id_booking,
+                      pelanggan: namaPel,
+                      pelangganId: ab.id_pelanggan,
+                      customerId: ab.id_pelanggan,
+                      userId: pel?.user_id,
+                      kendaraan: descKen,
+                      plat: nopol,
+                      bengkelId: created.id_bengkel || "bengkel-001",
+                      mekanikId: created.id_mekanik ?? undefined,
+                      jenis: created.jenis_servis || ab.jenis_servis,
+                      keluhan: created.keluhan || ab.keluhan,
+                      pekerjaan: created.pekerjaan || ab.jenis_servis,
+                      mekanik: created.mekanik || "Andi",
+                      tanggal: created.tanggal_servis || ab.tanggal_booking || hariIni(),
+                      status: "Menunggu",
+                      sparepart: "",
+                      items: [],
+                      catatan: created.catatan || "",
+                      biayaJasa: 0,
+                      biayaPart: 0,
+                      total: 0,
+                      noTransaksi: `TRX-${created.nomor_servis.replace("SRV-", "")}`,
+                    });
+                  }
+                } catch (healErr) {
+                  console.warn("Auto-heal booking to servis failed:", healErr);
                 }
               }
             }
-            if (usageFromServis.length > 0) {
-              setPenggunaan((current) => {
-                const remainder = current.filter(
-                  (c) =>
-                    !usageFromServis.some(
-                      (u) => u.servisNomor === c.servisNomor && u.sparepartId === c.sparepartId,
+
+            if (mappedServis.length > 0) {
+              setServis((currentLocal) => {
+                const localOnly = currentLocal.filter(
+                  (loc) =>
+                    !mappedServis.some(
+                      (sb) =>
+                        sb.id === loc.id ||
+                        sb.nomor === loc.nomor ||
+                        (loc.bookingId && sb.bookingId === loc.bookingId),
                     ),
                 );
-                return [...usageFromServis, ...remainder];
+                return [...localOnly, ...mappedServis];
               });
+
+              // Sinkronkan data penggunaan sparepart dari servis
+              const usageFromServis: PenggunaanSparepart[] = [];
+              for (const s of mappedServis) {
+                if (s.items && s.items.length > 0) {
+                  for (const it of s.items) {
+                    usageFromServis.push({
+                      id: `det-${s.id}-${it.sparepartId}`,
+                      sparepartId: it.sparepartId,
+                      servisId: s.id,
+                      servisNomor: s.nomor,
+                      tanggal: s.tanggal,
+                      jumlah: it.jumlah,
+                      mekanik: s.mekanik,
+                      pelanggan: s.pelanggan,
+                      statusServis: s.status,
+                      keterangan: s.pekerjaan || s.catatan || `Servis ${s.nomor}`,
+                    });
+                  }
+                }
+              }
+              if (usageFromServis.length > 0) {
+                setPenggunaan((current) => {
+                  const remainder = current.filter(
+                    (c) =>
+                      !usageFromServis.some(
+                        (u) => u.servisNomor === c.servisNomor && u.sparepartId === c.sparepartId,
+                      ),
+                  );
+                  return [...usageFromServis, ...remainder];
+                });
+              }
             }
+          } catch (err) {
+            console.error("Gagal refresh servis:", err);
+          } finally {
+            inFlightRefreshServis = null;
           }
-        } catch (err) {
-          console.error("Gagal refresh servis:", err);
-        }
+        })();
+        return inFlightRefreshServis;
       },
       refreshSparepart: async () => {
         if (!isSupabaseConfigured()) return;
@@ -4194,16 +4244,45 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           console.error("Gagal refresh stok:", err);
         }
       },
-      buatBooking: (b) => {
+      buatBooking: async (b) => {
         const idBooking = `bk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
         const seq = 1 + booking.length;
         const nomor = `BK-2026-${String(seq).padStart(4, "0")}`;
-        const baru: Booking = {
+        let baru: Booking = {
           ...b,
           id: idBooking,
           nomor,
           status: "Menunggu Konfirmasi",
         };
+
+        if (isSupabaseConfigured() && b.customerId && b.vehicleId) {
+          try {
+            const created = await bookingService.create({
+              id_booking: idBooking,
+              id_bengkel: b.bengkelId || "bengkel-001",
+              nomor_booking: baru.nomor,
+              id_pelanggan: b.customerId,
+              id_kendaraan: b.vehicleId,
+              tanggal_booking: b.tanggal,
+              waktu_booking: b.waktu,
+              jenis_servis: b.jenis,
+              keluhan: b.keluhan,
+              mekanik_diinginkan: b.mekanikDiinginkan,
+              id_mekanik: b.mekanikId ?? null,
+            });
+            if (created?.id_booking) {
+              baru = {
+                ...baru,
+                id: created.id_booking,
+                nomor: created.nomor_booking || baru.nomor,
+              };
+            }
+          } catch (err: any) {
+            console.error("Gagal simpan booking ke Supabase:", err);
+            throw err;
+          }
+        }
+
         setBooking((l) => [baru, ...l]);
 
         // Notifikasi ke Admin & Owner: "Booking baru masuk dari [Nama Pelanggan] untuk [Kendaraan]."
@@ -4216,7 +4295,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           judul: notifBookingJudul,
           pesan: notifBookingPesan,
           link: "/admin/booking",
-          bookingId: idBooking,
+          bookingId: baru.id,
           pelanggan: b.pelanggan,
         });
 
@@ -4230,32 +4309,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           })
           .catch(() => {});
 
-        if (isSupabaseConfigured() && b.customerId && b.vehicleId) {
-          bookingService
-            .create({
-              id_booking: idBooking,
-              id_bengkel: b.bengkelId || "bengkel-001",
-              nomor_booking: baru.nomor,
-              id_pelanggan: b.customerId,
-              id_kendaraan: b.vehicleId,
-              tanggal_booking: b.tanggal,
-              waktu_booking: b.waktu,
-              jenis_servis: b.jenis,
-              keluhan: b.keluhan,
-              mekanik_diinginkan: b.mekanikDiinginkan,
-              id_mekanik: b.mekanikId ?? null,
-            })
-            .then((created) => {
-              if (created?.id_booking && created.id_booking !== idBooking) {
-                setBooking((l) =>
-                  l.map((x) => (x.id === idBooking ? { ...x, id: created.id_booking } : x)),
-                );
-              }
-            })
-            .catch((err) => {
-              console.error("Gagal simpan booking ke Supabase:", err);
-            });
-        }
         return baru;
       },
       ubahStatusBooking: (id, status, alasan) => {

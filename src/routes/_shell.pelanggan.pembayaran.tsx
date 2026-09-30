@@ -399,8 +399,8 @@ function PembayaranPelanggan() {
     window.addEventListener("appbenk_servis_updated", handleUpdated);
     window.addEventListener("storage", handleUpdated);
 
-    // Polling fallback 10 detik agar status pembayaran & tagihan pelanggan selalu sinkron
-    const interval = setInterval(handleUpdated, 10000);
+    // Polling fallback 30 detik agar status pembayaran & tagihan pelanggan selalu sinkron
+    const interval = setInterval(handleUpdated, 30000);
 
     return () => {
       window.removeEventListener("appbenk_payment_accounts_updated", handleUpdated);

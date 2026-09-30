@@ -69,7 +69,7 @@ function SuperAdminDashboard() {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 10000);
+    const interval = setInterval(loadData, 45000);
     return () => clearInterval(interval);
   }, []);
 
