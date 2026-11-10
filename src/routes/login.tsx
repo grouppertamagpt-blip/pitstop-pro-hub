@@ -203,6 +203,10 @@ function LoginPage() {
     if (!hasil.user) {
       let pesan = hasil.error ?? "Email atau password salah. Silakan coba lagi.";
       const isConn =
+        pesan.includes("504") ||
+        pesan.includes("502") ||
+        pesan.includes("503") ||
+        pesan.toLowerCase().includes("gateway") ||
         pesan.toLowerCase().includes("failed to fetch") ||
         pesan.toLowerCase().includes("networkerror") ||
         pesan.toLowerCase().includes("timeout") ||

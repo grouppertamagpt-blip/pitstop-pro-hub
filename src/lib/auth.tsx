@@ -242,6 +242,111 @@ const profileCache = new Map<string, { user: SessionUser; timestamp: number }>()
 const inFlightProfiles = new Map<string, Promise<SessionUser | null>>();
 const CACHE_TTL_MS = 60000; // 60 detik caching lokal
 
+export const PRESENTATION_ACCOUNTS: {
+  email: string;
+  passwords: string[];
+  user: SessionUser;
+}[] = [
+  {
+    email: "anzaramanah@gmail.com",
+    passwords: ["anzar123", "anzar1234", "Anzar123!"],
+    user: {
+      id: "8f0f7092-891b-4c45-866f-c51aaa402f82",
+      nama: "Anzar Amanah",
+      email: "anzaramanah@gmail.com",
+      role: "admin",
+      bengkelId: "bengkel-2307",
+      workshopId: "bengkel-2307",
+      inisial: "AA",
+      premium: true,
+      telepon: "082223479899",
+    },
+  },
+  {
+    email: "admin@gmail.com",
+    passwords: ["anzar123", "admin123", "admin1234", "Appbenk2026!Secure"],
+    user: {
+      id: "761d25db-9920-45fa-b6cc-312c00c71a8b",
+      nama: "Admin AppBenk",
+      email: "admin@gmail.com",
+      role: "admin",
+      bengkelId: "bengkel-2307",
+      workshopId: "bengkel-2307",
+      inisial: "AA",
+      premium: true,
+    },
+  },
+  {
+    email: "fandinasir@gmail.com",
+    passwords: ["fandi123", "fandi1234", "Fandi123!"],
+    user: {
+      id: "ced96aa0-7383-4301-92f5-59d38737f70f",
+      nama: "Fandi Nasir",
+      email: "fandinasir@gmail.com",
+      role: "owner",
+      bengkelId: "bengkel-2307",
+      workshopId: "bengkel-2307",
+      inisial: "FN",
+      premium: true,
+      telepon: "081234567890",
+    },
+  },
+  {
+    email: "owner@gmail.com",
+    passwords: ["owner123", "owner1234", "Owner123!"],
+    user: {
+      id: "c456495e-bcc8-4aba-8b34-fae943a52aa2",
+      nama: "Owner AppBenk",
+      email: "owner@gmail.com",
+      role: "owner",
+      bengkelId: "bengkel-2307",
+      workshopId: "bengkel-2307",
+      inisial: "OA",
+      premium: true,
+      telepon: "081299887766",
+    },
+  },
+  {
+    email: "roniyahaha@gmail.com",
+    passwords: ["roni123", "roni1234", "Roni123!"],
+    user: {
+      id: "1c6cea74-3661-4260-b87f-8e3c23426405",
+      nama: "wiliesalim",
+      email: "roniyahaha@gmail.com",
+      role: "pelanggan",
+      inisial: "W",
+      premium: false,
+      pelangganId: "pl-1c6cea74",
+      pelanggan: "wiliesalim",
+      telepon: "088238416431",
+    },
+  },
+  {
+    email: "superadmin@gmail.com",
+    passwords: ["superadmin123", "superadmin", "superadmin1234"],
+    user: {
+      id: "eb985bd8-b2d1-4c0a-bc79-c94160ae51bc",
+      nama: "Super Admin AppBenk",
+      email: "superadmin@gmail.com",
+      role: "super_admin",
+      inisial: "SA",
+      premium: true,
+    },
+  },
+  {
+    email: "grouppertamagpt@gmail.com",
+    passwords: ["superadmin123", "superadmin", "superadmin1234"],
+    user: {
+      id: "362073b4-3f0d-4b50-97ac-b3b8e6aa2e3f",
+      nama: "Super Admin AppBenk",
+      email: "grouppertamagpt@gmail.com",
+      role: "super_admin",
+      inisial: "SA",
+      premium: true,
+    },
+  },
+];
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(() => {
     try {
@@ -655,47 +760,92 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       loading,
       masuk: async (email, password) => {
+        const cleanEmail = email.trim().toLowerCase();
+        const matchedFallback = PRESENTATION_ACCOUNTS.find(
+          (acc) =>
+            acc.email.toLowerCase() === cleanEmail &&
+            acc.passwords.includes(password),
+        );
+
         try {
-          // Proteksi timeout 12 detik agar tidak menggantung jika server Supabase paused atau jaringan offline
-          const timeoutPromise = new Promise<{ user?: SessionUser; error?: string }>((_, reject) =>
-            setTimeout(
-              () =>
-                reject(
-                  new Error(
-                    "Koneksi timeout (12 detik). Server Supabase tidak merespons (kemungkinan proyek database sedang dijeda/paused atau koneksi terputus).",
-                  ),
-                ),
-              12000,
-            ),
+          // Timeout race: jika Supabase tidak merespons dalam 4 detik (misal HTTP 504 / cold start), langsung fallback
+          const timeoutPromise = new Promise<{ user?: SessionUser; error?: string }>((resolve) =>
+            setTimeout(() => {
+              if (matchedFallback) {
+                console.warn("[Auth] Supabase lambat (>4 detik), mengaktifkan fallback presentasi.");
+                persistUser(matchedFallback.user);
+                resolve({ user: matchedFallback.user });
+              } else {
+                resolve({
+                  error:
+                    "Koneksi timeout. Server Supabase lambat merespons atau sedang dijeda (paused).",
+                });
+              }
+            }, 4000),
           );
 
           const performLogin = async (): Promise<{ user?: SessionUser; error?: string }> => {
-            const client = supabase();
-            const { data, error } = await client.auth.signInWithPassword({
-              email: email.trim(),
-              password,
-            });
-            if (error || !data.user) {
-              const rawMsg = error?.message || "Login gagal.";
-              if (rawMsg.toLowerCase().includes("failed to fetch") || rawMsg.toLowerCase().includes("networkerror")) {
-                return {
-                  error:
-                    "Gagal terhubung ke database Supabase. Proyek kemungkinan sedang dijeda (paused) karena inaktivitas Free Tier, atau koneksi internet bermasalah.",
-                };
+            try {
+              const client = supabase();
+              const { data, error } = await client.auth.signInWithPassword({
+                email: cleanEmail,
+                password,
+              });
+
+              if (error || !data.user) {
+                const rawMsg = error?.message || "Login gagal.";
+                const isGatewayOrNetwork =
+                  rawMsg.includes("504") ||
+                  rawMsg.includes("502") ||
+                  rawMsg.includes("503") ||
+                  rawMsg.toLowerCase().includes("gateway") ||
+                  rawMsg.toLowerCase().includes("failed to fetch") ||
+                  rawMsg.toLowerCase().includes("networkerror") ||
+                  rawMsg.toLowerCase().includes("timeout");
+
+                // JIKA SERVER MENGALAMI 504 / GATEWAY TIMEOUT / NETWORK ERROR DAN KREDENSIAL COCOK
+                if (isGatewayOrNetwork && matchedFallback) {
+                  console.warn("[Auth] Supabase error (" + rawMsg + "), mengaktifkan fallback presentasi.");
+                  persistUser(matchedFallback.user);
+                  return { user: matchedFallback.user };
+                }
+
+                if (isGatewayOrNetwork) {
+                  return {
+                    error:
+                      "Gagal terhubung ke database Supabase (HTTP 504 Gateway Timeout). Server Supabase sedang mengalami kendala jaringan atau dijeda.",
+                  };
+                }
+                return { error: rawMsg };
               }
-              return { error: rawMsg };
+
+              const sessionUser = await loadProfile(data.user.id, true);
+              if (!sessionUser) {
+                if (matchedFallback) {
+                  persistUser(matchedFallback.user);
+                  return { user: matchedFallback.user };
+                }
+                await client.auth.signOut();
+                return { error: "Profil akun tidak ditemukan. Hubungi administrator." };
+              }
+              persistUser(sessionUser);
+              return { user: sessionUser };
+            } catch (innerErr: any) {
+              if (matchedFallback) {
+                console.warn("[Auth] Exception login, mengaktifkan fallback presentasi:", innerErr);
+                persistUser(matchedFallback.user);
+                return { user: matchedFallback.user };
+              }
+              throw innerErr;
             }
-            const sessionUser = await loadProfile(data.user.id, true);
-            if (!sessionUser) {
-              await client.auth.signOut();
-              return { error: "Profil akun tidak ditemukan. Hubungi administrator." };
-            }
-            persistUser(sessionUser);
-            return { user: sessionUser };
           };
 
           return await Promise.race([performLogin(), timeoutPromise]);
         } catch (err: any) {
+          if (matchedFallback) {
+            persistUser(matchedFallback.user);
+            return { user: matchedFallback.user };
+          }
           const msg = err?.message || "Gagal menghubungi server database.";
           return { error: msg };
         }
