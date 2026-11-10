@@ -272,7 +272,7 @@ export const bookingService = {
     const idBooking =
       payload.id_booking ||
       `bk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-    const idBengkel = payload.workshop_id || payload.id_bengkel || "bengkel-001";
+    const idBengkel = payload.workshop_id || payload.id_bengkel || "bengkel-2307";
     if (!isSupabaseConfigured()) {
       return {
         id_booking: idBooking,
@@ -301,8 +301,9 @@ export const bookingService = {
       currentAuthUser = authData?.user;
     } catch {}
 
-    // Debounce / pencegahan duplikasi request ganda pada booking yang identik
+    // Debounce / pencegahan duplikasi request ganda pada booking yang identik (hanya 10 detik terakhir)
     try {
+      const tenSecsAgo = new Date(Date.now() - 10000).toISOString();
       const { data: recentDup } = await supabase()
         .from("booking_servis")
         .select("*")
@@ -310,6 +311,7 @@ export const bookingService = {
         .eq("id_kendaraan", payload.id_kendaraan)
         .eq("tanggal_booking", payload.tanggal_booking)
         .eq("waktu_booking", payload.waktu_booking)
+        .gte("created_at", tenSecsAgo)
         .limit(1)
         .maybeSingle();
 

@@ -3542,7 +3542,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   pelanggan: pel?.nama ?? "Pelanggan",
                   customerId: b.id_pelanggan,
                   vehicleId: b.id_kendaraan,
-                  bengkelId: b.id_bengkel ?? "bengkel-001",
+                  bengkelId: b.id_bengkel ?? "bengkel-2307",
                   mekanikId: b.id_mekanik ?? undefined,
                   kendaraan: ken ? `${ken.merk} ${ken.tipe} ${ken.tahun}` : "Kendaraan",
                   plat: ken?.nopol ?? "",
@@ -3565,7 +3565,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 const localOnly = currentLocal.filter(
                   (loc) => !mapped.some((sb) => sb.id === loc.id || sb.nomor === loc.nomor),
                 );
-                return [...localOnly, ...mapped];
+                return [...mapped, ...localOnly];
               });
 
               // Sinkronisasi otomatis notifikasi pelanggan dari data status booking
@@ -4259,7 +4259,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           try {
             const created = await bookingService.create({
               id_booking: idBooking,
-              id_bengkel: b.bengkelId || "bengkel-001",
+              id_bengkel: b.bengkelId || "bengkel-2307",
               nomor_booking: baru.nomor,
               id_pelanggan: b.customerId,
               id_kendaraan: b.vehicleId,
@@ -4275,6 +4275,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 ...baru,
                 id: created.id_booking,
                 nomor: created.nomor_booking || baru.nomor,
+                bengkelId: created.id_bengkel || b.bengkelId || "bengkel-2307",
+                status:
+                  created.status_booking === "disetujui"
+                    ? "Diterima"
+                    : created.status_booking === "ditolak"
+                      ? "Ditolak"
+                      : "Menunggu Konfirmasi",
               };
             }
           } catch (err: any) {
@@ -4284,6 +4291,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
 
         setBooking((l) => [baru, ...l]);
+
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("appbenk_booking_updated"));
+        }
 
         // Notifikasi ke Admin & Owner: "Booking baru masuk dari [Nama Pelanggan] untuk [Kendaraan]."
         const notifBookingJudul = "Booking Baru Masuk";
@@ -4301,7 +4312,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
         notifikasiService
           .notifyWorkshopStaff({
-            bengkelId: b.bengkelId || "bengkel-001",
+            bengkelId: b.bengkelId || "bengkel-2307",
             judul: notifBookingJudul,
             pesan: notifBookingPesan,
             tipe: "booking",

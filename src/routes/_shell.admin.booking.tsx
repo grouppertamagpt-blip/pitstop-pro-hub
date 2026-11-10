@@ -37,6 +37,7 @@ import { useAuth } from "@/lib/auth";
 import { useStore, tanggalPanjang, type Booking, type StatusBooking } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { notifikasiEvent } from "@/lib/whatsapp";
+import { supabase, isSupabaseConfigured } from "@/services/appbenk-service";
 
 const STATUS: StatusBooking[] = ["Menunggu Konfirmasi", "Diterima", "Ditolak"];
 
@@ -95,14 +96,38 @@ function BookingAdmin() {
   useEffect(() => {
     refreshBooking().catch(() => {});
 
+    // Supabase Realtime channel subscription untuk tabel booking_servis
+    let channel: any = null;
+    if (isSupabaseConfigured()) {
+      const client = supabase();
+      channel = client
+        .channel(`admin-booking-realtime-${Date.now().toString(36)}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "booking_servis",
+          },
+          (payload) => {
+            console.log("[AdminBooking] Realtime event diterima:", payload);
+            refreshBooking().catch(() => {});
+          },
+        )
+        .subscribe();
+    }
+
     const handleSync = () => {
       refreshBooking().catch(() => {});
     };
 
     window.addEventListener("appbenk_booking_updated", handleSync);
 
-    const interval = setInterval(handleSync, 30000);
+    const interval = setInterval(handleSync, 8000);
     return () => {
+      if (channel) {
+        supabase().removeChannel(channel);
+      }
       window.removeEventListener("appbenk_booking_updated", handleSync);
       clearInterval(interval);
     };
@@ -115,7 +140,14 @@ function BookingAdmin() {
   const data = useMemo(() => {
     const s = q.toLowerCase();
     return booking
-      .filter((b) => !b.bengkelId || b.bengkelId === bengkelAktifId)
+      .filter((b) => {
+        if (!b.bengkelId) return true;
+        if (b.bengkelId === bengkelAktifId) return true;
+        // Fallback bengkel-001 <-> bengkel-2307 agar booking pelanggan tidak tercecer
+        if (bengkelAktifId === "bengkel-2307" && b.bengkelId === "bengkel-001") return true;
+        if (bengkelAktifId === "bengkel-001" && b.bengkelId === "bengkel-2307") return true;
+        return false;
+      })
       .filter((b) => filter === "semua" || b.status === filter)
       .filter((b) =>
         [b.nomor, b.pelanggan, b.kendaraan, b.plat, b.jenis].some((v) =>

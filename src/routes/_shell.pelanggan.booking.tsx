@@ -198,7 +198,7 @@ function BookingPelanggan() {
       const { jenisLainnya, ...bookingForm } = form;
       const baru = await buatBooking({
         ...bookingForm,
-        bengkelId: form.bengkelId || "bengkel-001",
+        bengkelId: form.bengkelId || preferredBengkelId || "bengkel-2307",
         mekanikDiinginkan: form.mekanikDiinginkan.trim() || undefined,
         mekanikId: form.mekanikId || undefined,
         jenis: form.jenis === "Lainnya" ? jenisLainnya.trim() : form.jenis,

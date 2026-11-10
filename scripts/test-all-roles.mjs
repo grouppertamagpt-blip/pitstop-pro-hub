@@ -76,5 +76,4 @@ await testRole("PELANGGAN", "roniyahaha@gmail.com", "roni123");
 await testRole("OWNER (Fandi)", "fandinasir@gmail.com", "fandi123");
 await testRole("OWNER (owner@gmail.com)", "owner@gmail.com", "owner123");
 await testRole("ADMIN (Anzar)", "anzaramanah@gmail.com", "anzar123");
-await testRole("SUPER ADMIN (superadmin@gmail.com)", "superadmin@gmail.com", "superadmin123");
 await testRole("SUPER ADMIN (grouppertamagpt@gmail.com)", "grouppertamagpt@gmail.com", "superadmin123");

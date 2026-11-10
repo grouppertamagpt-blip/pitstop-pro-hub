@@ -355,11 +355,13 @@ function playNotificationChime() {
 function NotificationBell() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
   const {
     notifikasi,
     tambahNotifikasiRealtime,
     tandaiNotifikasiDibaca,
     tandaiSemuaNotifikasiDibaca,
+    refreshBooking,
   } = useStore();
 
   // Load notifikasi dari Supabase on mount/login
@@ -488,8 +490,10 @@ function NotificationBell() {
 
   const handleKlikNotif = (id: string, link?: string, statusBooking?: string, judul?: string) => {
     tandaiNotifikasiDibaca(id);
+    setMenuOpen(false);
+
     let target = link;
-    if (user.role === "super_admin") {
+    if (user?.role === "super_admin") {
       if (judul && (judul.toLowerCase().includes("tiket") || judul.toLowerCase().includes("cs") || judul.toLowerCase().includes("customer service") || judul.toLowerCase().includes("developer support"))) {
         target = "/superadmin/cs";
       } else if (judul && (judul.toLowerCase().includes("error") || judul.toLowerCase().includes("log"))) {
@@ -497,8 +501,8 @@ function NotificationBell() {
       } else if (judul && (judul.toLowerCase().includes("bengkel") || judul.toLowerCase().includes("klien"))) {
         target = "/superadmin/klien";
       }
-    } else if (user.role === "admin" || user.role === "owner") {
-      if (!target) {
+    } else if (user?.role === "admin" || user?.role === "owner") {
+      if (!target || target === "") {
         if (judul && (judul.toLowerCase().includes("pembayaran") || judul.toLowerCase().includes("qris") || judul.toLowerCase().includes("transfer") || judul.toLowerCase().includes("cash"))) {
           target = "/admin/pembayaran?filter=menunggu_verifikasi";
         } else if (judul && (judul.toLowerCase().includes("booking") || judul.toLowerCase().includes("servis masuk"))) {
@@ -508,7 +512,7 @@ function NotificationBell() {
         }
       }
     } else {
-      if (!target) {
+      if (!target || target === "") {
         if (statusBooking === "Diterima" || (judul && (judul.toLowerCase().includes("booking diterima") || judul.toLowerCase().includes("booking disetujui")))) {
           target = "/pelanggan/status";
         } else if (statusBooking === "Ditolak" || (judul && judul.toLowerCase().includes("booking ditolak"))) {
@@ -520,7 +524,11 @@ function NotificationBell() {
         }
       }
     }
+
     if (target) {
+      if (target.includes("booking")) {
+        refreshBooking().catch(() => {});
+      }
       navigate({ to: target });
     }
   };
@@ -555,7 +563,7 @@ function NotificationBell() {
   };
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon" className="relative" aria-label="Notifikasi">
           <Bell className="size-5 text-foreground/80" />
@@ -600,11 +608,14 @@ function NotificationBell() {
             listNotif.map((n) => {
               const isUnread = !n.dibaca;
               return (
-                <div
+                <DropdownMenuItem
                   key={n.id}
-                  onClick={() => handleKlikNotif(n.id, n.link, n.statusBooking, n.judul)}
-                  className={`flex cursor-pointer items-start gap-3 p-3.5 text-xs transition-colors hover:bg-muted/50 ${
-                    isUnread ? "bg-primary/5" : ""
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    handleKlikNotif(n.id, n.link, n.statusBooking, n.judul);
+                  }}
+                  className={`flex cursor-pointer items-start gap-3 p-3.5 text-xs focus:bg-muted/70 transition-colors w-full rounded-none border-b border-border/40 last:border-b-0 ${
+                    isUnread ? "bg-primary/5 font-medium" : ""
                   }`}
                 >
                   {getNotifIcon(n)}
@@ -622,7 +633,9 @@ function NotificationBell() {
                         })}
                       </span>
                     </div>
-                    <p className="line-clamp-2 text-muted-foreground leading-relaxed">{n.pesan}</p>
+                    <p className="line-clamp-2 text-muted-foreground leading-relaxed whitespace-normal text-left">
+                      {n.pesan}
+                    </p>
                     {n.link && (
                       <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary">
                         Buka & Periksa <ExternalLink className="size-3" />
@@ -630,7 +643,7 @@ function NotificationBell() {
                     )}
                   </div>
                   {isUnread && <span className="size-2 rounded-full bg-primary shrink-0 mt-1.5" />}
-                </div>
+                </DropdownMenuItem>
               );
             })
           )}

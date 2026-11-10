@@ -198,65 +198,71 @@ function LoginPage() {
     if (ee || ep) return;
 
     setLoading(true);
-    const hasil = await masuk(cleanEmail, cleanPassword);
-    setLoading(false);
-    if (!hasil.user) {
-      let pesan = hasil.error ?? "Email atau password salah. Silakan coba lagi.";
-      const isConn =
-        pesan.includes("504") ||
-        pesan.includes("502") ||
-        pesan.includes("503") ||
-        pesan.toLowerCase().includes("gateway") ||
-        pesan.toLowerCase().includes("failed to fetch") ||
-        pesan.toLowerCase().includes("networkerror") ||
-        pesan.toLowerCase().includes("timeout") ||
-        pesan.toLowerCase().includes("database supabase") ||
-        pesan.toLowerCase().includes("server supabase") ||
-        pesan.toLowerCase().includes("dijeda") ||
-        pesan.toLowerCase().includes("paused");
+    try {
+      const hasil = await masuk(cleanEmail, cleanPassword);
+      if (!hasil.user) {
+        let pesan = hasil.error ?? "Email atau password salah. Silakan coba lagi.";
+        const isConn =
+          pesan.includes("504") ||
+          pesan.includes("502") ||
+          pesan.includes("503") ||
+          pesan.toLowerCase().includes("gateway") ||
+          pesan.toLowerCase().includes("failed to fetch") ||
+          pesan.toLowerCase().includes("networkerror") ||
+          pesan.toLowerCase().includes("timeout") ||
+          pesan.toLowerCase().includes("database supabase") ||
+          pesan.toLowerCase().includes("server supabase") ||
+          pesan.toLowerCase().includes("dijeda") ||
+          pesan.toLowerCase().includes("paused");
 
-      if (isConn) {
-        setIsConnectionError(true);
-        setIsUnconfirmed(false);
-        setIsWrongPassword(false);
-        pesan =
-          "Tidak dapat terhubung ke server database Supabase. Proyek kemungkinan sedang dijeda (paused) otomatis oleh Supabase karena inaktivitas Free Tier, atau koneksi internet terganggu.";
-      } else if (
-        pesan.toLowerCase().includes("email not confirmed") ||
-        pesan.toLowerCase().includes("email not verified")
-      ) {
-        pesan =
-          "Email belum dikonfirmasi. Silakan periksa inbox email Anda atau kirim ulang tautan verifikasi.";
-        setIsUnconfirmed(true);
-        setIsWrongPassword(false);
-        setIsConnectionError(false);
-        if (typeof window !== "undefined") {
-          window.sessionStorage.setItem("appbenk_pending_email", cleanEmail);
+        if (isConn) {
+          setIsConnectionError(true);
+          setIsUnconfirmed(false);
+          setIsWrongPassword(false);
+          pesan =
+            "Tidak dapat terhubung ke server database Supabase. Proyek kemungkinan sedang dijeda (paused) otomatis oleh Supabase karena inaktivitas Free Tier, atau koneksi internet terganggu.";
+        } else if (
+          pesan.toLowerCase().includes("email not confirmed") ||
+          pesan.toLowerCase().includes("email not verified")
+        ) {
+          pesan =
+            "Email belum dikonfirmasi. Silakan periksa inbox email Anda atau kirim ulang tautan verifikasi.";
+          setIsUnconfirmed(true);
+          setIsWrongPassword(false);
+          setIsConnectionError(false);
+          if (typeof window !== "undefined") {
+            window.sessionStorage.setItem("appbenk_pending_email", cleanEmail);
+          }
+        } else if (
+          pesan.toLowerCase().includes("invalid login credentials") ||
+          pesan.toLowerCase().includes("invalid_credentials") ||
+          pesan.toLowerCase().includes("password salah") ||
+          pesan.toLowerCase().includes("email atau kata sandi salah") ||
+          pesan.toLowerCase().includes("email atau password salah")
+        ) {
+          setIsWrongPassword(true);
+          setIsUnconfirmed(false);
+          setIsConnectionError(false);
+          recordFailedAttempt();
+          pesan = "Anda salah memasukkan password.";
+        } else {
+          setIsUnconfirmed(false);
+          setIsWrongPassword(false);
+          setIsConnectionError(false);
         }
-      } else if (
-        pesan.toLowerCase().includes("invalid login credentials") ||
-        pesan.toLowerCase().includes("invalid_credentials") ||
-        pesan.toLowerCase().includes("password salah") ||
-        pesan.toLowerCase().includes("email atau kata sandi salah") ||
-        pesan.toLowerCase().includes("email atau password salah")
-      ) {
-        setIsWrongPassword(true);
-        setIsUnconfirmed(false);
-        setIsConnectionError(false);
-        recordFailedAttempt();
-        pesan = "Anda salah memasukkan password.";
-      } else {
-        setIsUnconfirmed(false);
-        setIsWrongPassword(false);
-        setIsConnectionError(false);
+        setError(pesan);
+        return;
       }
-      setError(pesan);
-      return;
-    }
 
-    resetFailedAttempts();
-    toast.success(`Berhasil masuk sebagai ${LABEL_ROLE[hasil.user.role]}`);
-    navigate({ to: HOME_ROLE[hasil.user.role], replace: true });
+      resetFailedAttempts();
+      toast.success(`Berhasil masuk sebagai ${LABEL_ROLE[hasil.user.role]}`);
+      navigate({ to: HOME_ROLE[hasil.user.role], replace: true });
+    } catch (err: any) {
+      console.error("[Login] submit error:", err);
+      setError(err?.message || "Terjadi kesalahan saat memproses login. Silakan coba lagi.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
