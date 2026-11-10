@@ -297,45 +297,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let displayName = data.full_name || "User";
       let displayPhone = data.phone;
 
-      // 1. Cek apakah pengguna terdaftar di tabel owner (via user_id atau email)
-      try {
-        const { data: ownerRow } = await client
-          .from("owner")
-          .select("*")
-          .or(`user_id.eq.${id},email.ilike.${data.email}`)
-          .maybeSingle();
-
-        if (ownerRow) {
-          resolvedRole = "owner";
-          const isFandi =
-            (data.email && data.email.toLowerCase().includes("fandi")) ||
-            (displayName && displayName.toLowerCase().includes("fandi")) ||
-            (ownerRow.nama && ownerRow.nama.toLowerCase().includes("fandi"));
-          activeBengkelId =
-            ownerRow.workshop_id ?? ownerRow.id_bengkel ?? (isFandi ? "bengkel-2307" : activeBengkelId ?? "bengkel-001");
-          if (
-            ownerRow.nama &&
-            (!data.full_name || data.full_name.toLowerCase() === "owner" || data.full_name === "User")
-          ) {
-            displayName = ownerRow.nama;
-          }
-          if (ownerRow.no_hp && !displayPhone) {
-            displayPhone = ownerRow.no_hp;
-          }
-          if (ownerRow.user_id !== id) {
-            client
-              .from("owner")
-              .update({ user_id: id })
-              .eq("id_owner", ownerRow.id_owner)
-              .then(() => {});
-          }
-        }
-      } catch {
-        // abaikan error jika tabel owner belum siap
+      // Kasus 1: SUPER ADMIN langsung selesai tanpa kueri tambahan
+      if (resolvedRole === "super_admin") {
+        const payload: SessionUser = {
+          id: data.id,
+          nama: displayName,
+          email: data.email || "",
+          role: "super_admin",
+          inisial: inisialDari(displayName),
+          premium: true,
+          ...(displayPhone ? { telepon: displayPhone } : {}),
+          ...(data.gender ? { gender: data.gender } : {}),
+          ...(data.avatar_url ? { avatarUrl: data.avatar_url } : {}),
+        };
+        profileCache.set(id, { user: payload, timestamp: Date.now() });
+        return payload;
       }
 
-      // 2. Cek apakah pengguna terdaftar di tabel admin (via user_id atau email)
-      if (resolvedRole !== "owner") {
+      // Kasus 2: OWNER
+      if (resolvedRole === "owner") {
+        const isFandi =
+          (data.email && data.email.toLowerCase().includes("fandi")) ||
+          (displayName && displayName.toLowerCase().includes("fandi"));
+        activeBengkelId = activeBengkelId || (isFandi ? "bengkel-2307" : "bengkel-2307");
+      } else {
+        // Cek tabel owner jika role di profiles belum owner
+        try {
+          const { data: ownerRow } = await client
+            .from("owner")
+            .select("*")
+            .or(`user_id.eq.${id},email.ilike.${data.email}`)
+            .maybeSingle();
+
+          if (ownerRow) {
+            resolvedRole = "owner";
+            const isFandi =
+              (data.email && data.email.toLowerCase().includes("fandi")) ||
+              (displayName && displayName.toLowerCase().includes("fandi")) ||
+              (ownerRow.nama && ownerRow.nama.toLowerCase().includes("fandi"));
+            activeBengkelId =
+              ownerRow.workshop_id ?? ownerRow.id_bengkel ?? (isFandi ? "bengkel-2307" : activeBengkelId ?? "bengkel-2307");
+            if (
+              ownerRow.nama &&
+              (!data.full_name || data.full_name.toLowerCase() === "owner" || data.full_name === "User")
+            ) {
+              displayName = ownerRow.nama;
+            }
+            if (ownerRow.no_hp && !displayPhone) {
+              displayPhone = ownerRow.no_hp;
+            }
+          }
+        } catch {}
+      }
+
+      // Kasus 3: ADMIN
+      if (resolvedRole === "admin") {
+        activeBengkelId = activeBengkelId || "bengkel-2307";
+      } else if (resolvedRole !== "owner") {
         try {
           const { data: adminRow } = await client
             .from("admin")
@@ -346,7 +364,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (adminRow) {
             resolvedRole = "admin";
             activeBengkelId =
-              adminRow.workshop_id ?? adminRow.id_bengkel ?? activeBengkelId ?? "bengkel-001";
+              adminRow.workshop_id ?? adminRow.id_bengkel ?? activeBengkelId ?? "bengkel-2307";
             if (
               adminRow.nama &&
               (!data.full_name || data.full_name.toLowerCase() === "admin" || data.full_name === "User")
@@ -356,36 +374,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (adminRow.no_hp && !displayPhone) {
               displayPhone = adminRow.no_hp;
             }
-            if (adminRow.user_id !== id) {
-              client
-                .from("admin")
-                .update({ user_id: id })
-                .eq("id_admin", adminRow.id_admin)
-                .then(() => {});
-            }
           }
-        } catch {
-          // abaikan error jika tabel admin belum siap
-        }
+        } catch {}
       }
 
-      // 3. Cek user_metadata dari auth.user jika belum terdeteksi owner/admin
-      if (resolvedRole === "pelanggan") {
-        try {
-          const { data: sessionData } = await client.auth.getUser();
-          const metaRole = sessionData?.user?.user_metadata?.["role"] as Role | undefined;
-          if (metaRole === "owner" || metaRole === "admin" || metaRole === "super_admin") {
-            resolvedRole = metaRole;
-            const metaBengkel = (sessionData?.user?.user_metadata?.["workshop_id"] ||
-              sessionData?.user?.user_metadata?.["id_bengkel"]) as string | undefined;
-            if (metaBengkel) activeBengkelId = metaBengkel;
-          }
-        } catch {
-          // abaikan error
-        }
-      }
-
-      // 4. Ambil workshop_id dari workshop_members jika belum ada
+      // Ambil workshop_id dari workshop_members jika belum ada
       if (!activeBengkelId && (resolvedRole === "admin" || resolvedRole === "owner")) {
         try {
           const { data: memberData } = await client
@@ -397,14 +390,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (memberData?.workshop_id) {
             activeBengkelId = memberData.workshop_id;
           }
-        } catch {
-          // abaikan error jika workshop_members belum siap
-        }
+        } catch {}
       }
 
-      // 5. Cek & sinkronkan entitas pelanggan resmi jika pengguna adalah pelanggan
+      // Kasus 4: PELANGGAN
       let resolvedPelangganId: string | undefined = undefined;
-      if (resolvedRole === "pelanggan" || !["admin", "owner"].includes(resolvedRole)) {
+      if (resolvedRole === "pelanggan") {
         try {
           const { data: pelangganRow } = await client
             .from("pelanggan")
@@ -415,13 +406,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
           if (pelangganRow) {
             resolvedPelangganId = pelangganRow.id_pelanggan;
-            if (pelangganRow.user_id !== id) {
-              client
-                .from("pelanggan")
-                .update({ user_id: id })
-                .eq("id_pelanggan", pelangganRow.id_pelanggan)
-                .then(() => {});
-            }
           } else {
             const newId = `pl-${id.slice(0, 8)}`;
             const { data: createdPel } = await client
@@ -438,12 +422,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               .maybeSingle();
             resolvedPelangganId = createdPel?.id_pelanggan || newId;
           }
-        } catch {
-          // abaikan error jika tabel pelanggan belum siap
-        }
+        } catch {}
       }
 
-      // Cek status paket bengkel untuk akses premium
       let isUserPremium = resolvedRole === "super_admin";
       if (!isUserPremium && activeBengkelId) {
         try {
@@ -676,7 +657,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       masuk: async (email, password) => {
         try {
           // Proteksi timeout 12 detik agar tidak menggantung jika server Supabase paused atau jaringan offline
-          const timeoutPromise = new Promise<{ data: any; error: any }>((_, reject) =>
+          const timeoutPromise = new Promise<{ user?: SessionUser; error?: string }>((_, reject) =>
             setTimeout(
               () =>
                 reject(
@@ -688,29 +669,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             ),
           );
 
-          const loginPromise = supabase().auth.signInWithPassword({
-            email: email.trim(),
-            password,
-          });
-
-          const { data, error } = await Promise.race([loginPromise, timeoutPromise]);
-          if (error || !data.user) {
-            const rawMsg = error?.message || "Login gagal.";
-            if (rawMsg.toLowerCase().includes("failed to fetch") || rawMsg.toLowerCase().includes("networkerror")) {
-              return {
-                error:
-                  "Gagal terhubung ke database Supabase. Proyek kemungkinan sedang dijeda (paused) karena inaktivitas Free Tier, atau koneksi internet bermasalah.",
-              };
+          const performLogin = async (): Promise<{ user?: SessionUser; error?: string }> => {
+            const client = supabase();
+            const { data, error } = await client.auth.signInWithPassword({
+              email: email.trim(),
+              password,
+            });
+            if (error || !data.user) {
+              const rawMsg = error?.message || "Login gagal.";
+              if (rawMsg.toLowerCase().includes("failed to fetch") || rawMsg.toLowerCase().includes("networkerror")) {
+                return {
+                  error:
+                    "Gagal terhubung ke database Supabase. Proyek kemungkinan sedang dijeda (paused) karena inaktivitas Free Tier, atau koneksi internet bermasalah.",
+                };
+              }
+              return { error: rawMsg };
             }
-            return { error: rawMsg };
-          }
-          const sessionUser = await loadProfile(data.user.id, true);
-          if (!sessionUser) {
-            await supabase().auth.signOut();
-            return { error: "Profil akun tidak ditemukan. Hubungi administrator." };
-          }
-          persistUser(sessionUser);
-          return { user: sessionUser };
+            const sessionUser = await loadProfile(data.user.id, true);
+            if (!sessionUser) {
+              await client.auth.signOut();
+              return { error: "Profil akun tidak ditemukan. Hubungi administrator." };
+            }
+            persistUser(sessionUser);
+            return { user: sessionUser };
+          };
+
+          return await Promise.race([performLogin(), timeoutPromise]);
         } catch (err: any) {
           const msg = err?.message || "Gagal menghubungi server database.";
           return { error: msg };

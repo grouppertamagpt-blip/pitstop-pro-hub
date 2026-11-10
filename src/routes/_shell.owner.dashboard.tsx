@@ -56,7 +56,7 @@ function DashboardOwner() {
     [pembayaran],
   );
   const stokKritis = useMemo(
-    () => sparepart.filter((p) => p.stok <= p.minStok).length,
+    () => sparepart.filter((p) => p.stok <= (p.stokMinimum ?? (p as any).minStok ?? 5)).length,
     [sparepart],
   );
 
