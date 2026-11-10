@@ -674,18 +674,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       loading,
       masuk: async (email, password) => {
-        const { data, error } = await supabase().auth.signInWithPassword({
-          email: email.trim(),
-          password,
-        });
-        if (error || !data.user) return { error: error?.message ?? "Login gagal." };
-        const sessionUser = await loadProfile(data.user.id, true);
-        if (!sessionUser) {
-          await supabase().auth.signOut();
-          return { error: "Profil akun tidak ditemukan. Hubungi administrator." };
+        try {
+          // Proteksi timeout 12 detik agar tidak menggantung jika server Supabase paused atau jaringan offline
+          const timeoutPromise = new Promise<{ data: any; error: any }>((_, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    "Koneksi timeout (12 detik). Server Supabase tidak merespons (kemungkinan proyek database sedang dijeda/paused atau koneksi terputus).",
+                  ),
+                ),
+              12000,
+            ),
+          );
+
+          const loginPromise = supabase().auth.signInWithPassword({
+            email: email.trim(),
+            password,
+          });
+
+          const { data, error } = await Promise.race([loginPromise, timeoutPromise]);
+          if (error || !data.user) {
+            const rawMsg = error?.message || "Login gagal.";
+            if (rawMsg.toLowerCase().includes("failed to fetch") || rawMsg.toLowerCase().includes("networkerror")) {
+              return {
+                error:
+                  "Gagal terhubung ke database Supabase. Proyek kemungkinan sedang dijeda (paused) karena inaktivitas Free Tier, atau koneksi internet bermasalah.",
+              };
+            }
+            return { error: rawMsg };
+          }
+          const sessionUser = await loadProfile(data.user.id, true);
+          if (!sessionUser) {
+            await supabase().auth.signOut();
+            return { error: "Profil akun tidak ditemukan. Hubungi administrator." };
+          }
+          persistUser(sessionUser);
+          return { user: sessionUser };
+        } catch (err: any) {
+          const msg = err?.message || "Gagal menghubungi server database.";
+          return { error: msg };
         }
-        persistUser(sessionUser);
-        return { user: sessionUser };
       },
       daftar: async ({ nama, email, telepon, gender, password }) => {
         const cleanEmail = email.trim().toLowerCase();

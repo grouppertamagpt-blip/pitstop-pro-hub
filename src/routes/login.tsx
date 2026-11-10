@@ -9,6 +9,8 @@ import {
   Mail,
   ShieldAlert,
   UserRoundCheck,
+  AlertTriangle,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { AuthLayout } from "@/components/auth-layout";
@@ -64,6 +66,7 @@ function LoginPage() {
   const [error, setError] = useState("");
   const [isUnconfirmed, setIsUnconfirmed] = useState(false);
   const [isWrongPassword, setIsWrongPassword] = useState(false);
+  const [isConnectionError, setIsConnectionError] = useState(false);
 
   // Proteksi Keamanan Brute Force (Lockout setelah 5x kesalahan berturut-turut)
   const [failedAttempts, setFailedAttempts] = useState(0);
@@ -199,7 +202,22 @@ function LoginPage() {
     setLoading(false);
     if (!hasil.user) {
       let pesan = hasil.error ?? "Email atau password salah. Silakan coba lagi.";
-      if (
+      const isConn =
+        pesan.toLowerCase().includes("failed to fetch") ||
+        pesan.toLowerCase().includes("networkerror") ||
+        pesan.toLowerCase().includes("timeout") ||
+        pesan.toLowerCase().includes("database supabase") ||
+        pesan.toLowerCase().includes("server supabase") ||
+        pesan.toLowerCase().includes("dijeda") ||
+        pesan.toLowerCase().includes("paused");
+
+      if (isConn) {
+        setIsConnectionError(true);
+        setIsUnconfirmed(false);
+        setIsWrongPassword(false);
+        pesan =
+          "Tidak dapat terhubung ke server database Supabase. Proyek kemungkinan sedang dijeda (paused) otomatis oleh Supabase karena inaktivitas Free Tier, atau koneksi internet terganggu.";
+      } else if (
         pesan.toLowerCase().includes("email not confirmed") ||
         pesan.toLowerCase().includes("email not verified")
       ) {
@@ -207,6 +225,7 @@ function LoginPage() {
           "Email belum dikonfirmasi. Silakan periksa inbox email Anda atau kirim ulang tautan verifikasi.";
         setIsUnconfirmed(true);
         setIsWrongPassword(false);
+        setIsConnectionError(false);
         if (typeof window !== "undefined") {
           window.sessionStorage.setItem("appbenk_pending_email", cleanEmail);
         }
@@ -219,11 +238,13 @@ function LoginPage() {
       ) {
         setIsWrongPassword(true);
         setIsUnconfirmed(false);
+        setIsConnectionError(false);
         recordFailedAttempt();
         pesan = "Anda salah memasukkan password.";
       } else {
         setIsUnconfirmed(false);
         setIsWrongPassword(false);
+        setIsConnectionError(false);
       }
       setError(pesan);
       return;
@@ -323,15 +344,53 @@ function LoginPage() {
             )}
 
             {error && (
-              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive space-y-1">
-                <p>{error}</p>
-                {isUnconfirmed && (
-                  <Link
-                    to="/verify-email"
-                    className="inline-block text-xs font-semibold text-primary underline hover:text-primary/80"
-                  >
-                    Buka Halaman Verifikasi Email &rarr;
-                  </Link>
+              <div
+                className={`rounded-lg p-3 text-sm space-y-2 ${
+                  isConnectionError
+                    ? "bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200"
+                    : "bg-destructive/10 text-destructive"
+                }`}
+              >
+                {isConnectionError ? (
+                  <>
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="size-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                      <div className="space-y-1.5 flex-1">
+                        <p className="font-semibold text-xs uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                          Database Supabase Belum Merespons
+                        </p>
+                        <p className="text-xs leading-relaxed text-muted-foreground dark:text-amber-200/90">
+                          {error}
+                        </p>
+                        <div className="pt-1">
+                          <a
+                            href="https://supabase.com/dashboard/project/oviiclcydeopilagbypq"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary underline underline-offset-4 hover:text-primary/80"
+                          >
+                            Buka Supabase Dashboard &amp; Klik &apos;Restore Project&apos;
+                            <ExternalLink className="size-3" />
+                          </a>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          💡 Catatan: Setelah klik Restore, tunggu ~1-2 menit hingga server Supabase aktif kembali, lalu coba tekan tombol Login.
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p>{error}</p>
+                    {isUnconfirmed && (
+                      <Link
+                        to="/verify-email"
+                        className="inline-block text-xs font-semibold text-primary underline hover:text-primary/80"
+                      >
+                        Buka Halaman Verifikasi Email &rarr;
+                      </Link>
+                    )}
+                  </>
                 )}
               </div>
             )}

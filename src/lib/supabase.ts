@@ -102,6 +102,35 @@ export function getSupabaseConfig(): { url: string; anonKey: string; isConfigure
   return { url, anonKey, isConfigured };
 }
 
+function isNewSupabaseApiKey(value: string): boolean {
+  return value.startsWith("sb_publishable_") || value.startsWith("sb_secret_");
+}
+
+function createSupabaseFetch(supabaseKey: string): typeof fetch {
+  return (input, init) => {
+    let headers: Headers;
+    if (typeof Request !== "undefined" && input instanceof Request) {
+      headers = new Headers(input.headers);
+    } else {
+      headers = new Headers();
+    }
+
+    if (init?.headers) {
+      new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+    }
+
+    // New Supabase API keys (sb_publishable_*) are opaque tokens, not JWTs.
+    // If supabase-js defaults Authorization to Bearer <publishableKey>, remove it
+    // so Supabase gateway does not throw UNAUTHORIZED_INVALID_API_KEY_TYPE.
+    if (isNewSupabaseApiKey(supabaseKey) && headers.get("Authorization") === `Bearer ${supabaseKey}`) {
+      headers.delete("Authorization");
+    }
+
+    headers.set("apikey", supabaseKey);
+    return fetch(input, { ...init, headers });
+  };
+}
+
 /**
  * Inisialisasi Supabase client yang aman untuk SSR (Server-Side Rendering) dan Client Browser.
  * Mencegah unhandled exception jika environment variables salah format atau belum disetel.
@@ -146,7 +175,12 @@ export function supabase(): SupabaseClient {
 
   let instance: SupabaseClient;
   try {
-    instance = createClient(activeUrl, activeKey, { auth: authOptions });
+    instance = createClient(activeUrl, activeKey, {
+      auth: authOptions,
+      global: {
+        fetch: createSupabaseFetch(activeKey),
+      },
+    });
   } catch (err) {
     console.error("[Supabase] Gagal inisialisasi createClient, fallback ke dummy instance:", err);
     instance = createClient("https://placeholder-project.supabase.co", "dummy-key-safe", {
