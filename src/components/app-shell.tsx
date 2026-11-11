@@ -14,6 +14,9 @@ import {
   CalendarPlus,
   Wrench,
   Building2,
+  Car,
+  ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import { useEffect, useState, useMemo, type ReactNode } from "react";
 import { BrandLogo } from "@/components/brand-logo";
@@ -27,7 +30,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { LABEL_ROLE, NAV_GROUPS, useAuth } from "@/lib/auth";
+import { HOME_ROLE, LABEL_ROLE, NAV_GROUPS, Role, useAuth } from "@/lib/auth";
 import { useStore } from "@/lib/store";
 import { toast } from "sonner";
 import { supabase, isSupabaseConfigured, notifikasiService } from "@/services/appbenk-service";
@@ -37,7 +40,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
-  const { user, keluar } = useAuth();
+  const { user, keluar, masukSebagaiRole } = useAuth();
 
   useEffect(() => {
     setOpen(false);
@@ -299,6 +302,69 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <DropdownMenuItem onSelect={() => navigate({ to: "/profil" })}>
                   <UserCircle2 className="mr-2 size-4" /> Profile
                 </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-[11px] font-bold text-primary flex items-center gap-1.5 uppercase tracking-wider">
+                  <Sparkles className="size-3 text-primary" />
+                  Ganti Peran Presentasi
+                </DropdownMenuLabel>
+
+                {user.role !== "pelanggan" && (
+                  <DropdownMenuItem
+                    className="cursor-pointer text-xs"
+                    onSelect={() => {
+                      masukSebagaiRole("pelanggan");
+                      toast.success("Beralih ke peran Pelanggan (wiliesalim)");
+                      navigate({ to: HOME_ROLE.pelanggan, replace: true });
+                    }}
+                  >
+                    <Car className="mr-2 size-3.5 text-emerald-600 dark:text-emerald-400" />
+                    <span>Masuk sbg Pelanggan</span>
+                  </DropdownMenuItem>
+                )}
+
+                {user.role !== "admin" && (
+                  <DropdownMenuItem
+                    className="cursor-pointer text-xs"
+                    onSelect={() => {
+                      masukSebagaiRole("admin");
+                      toast.success("Beralih ke peran Admin Bengkel (Anzar Amanah)");
+                      navigate({ to: HOME_ROLE.admin, replace: true });
+                    }}
+                  >
+                    <Wrench className="mr-2 size-3.5 text-blue-600 dark:text-blue-400" />
+                    <span>Masuk sbg Admin Bengkel</span>
+                  </DropdownMenuItem>
+                )}
+
+                {user.role !== "owner" && (
+                  <DropdownMenuItem
+                    className="cursor-pointer text-xs"
+                    onSelect={() => {
+                      masukSebagaiRole("owner");
+                      toast.success("Beralih ke peran Owner Bengkel (Fandi Nasir)");
+                      navigate({ to: HOME_ROLE.owner, replace: true });
+                    }}
+                  >
+                    <Building2 className="mr-2 size-3.5 text-amber-600 dark:text-amber-400" />
+                    <span>Masuk sbg Owner Bengkel</span>
+                  </DropdownMenuItem>
+                )}
+
+                {user.role !== "super_admin" && (
+                  <DropdownMenuItem
+                    className="cursor-pointer text-xs"
+                    onSelect={() => {
+                      masukSebagaiRole("super_admin");
+                      toast.success("Beralih ke peran Super Admin");
+                      navigate({ to: HOME_ROLE.super_admin, replace: true });
+                    }}
+                  >
+                    <ShieldCheck className="mr-2 size-3.5 text-purple-600 dark:text-purple-400" />
+                    <span>Masuk sbg Super Admin</span>
+                  </DropdownMenuItem>
+                )}
+
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   className="text-destructive focus:bg-destructive/10 focus:text-destructive cursor-pointer"
