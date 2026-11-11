@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useMemo, useEffect, useRef } from "react";
-import { CalendarPlus, Car, MapPin, RefreshCw } from "lucide-react";
+import { CalendarPlus, Car, MapPin, RefreshCw, Building2 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader, EmptyState } from "@/components/page-header";
 import { BookingBadge } from "@/components/status-badge";
@@ -60,6 +60,7 @@ function BookingPelanggan() {
     kendaraan,
     bengkel,
     activeBengkelId,
+    setActiveBengkelId,
     activeBengkel,
     mekanik,
     buatBooking,
@@ -259,67 +260,44 @@ function BookingPelanggan() {
     return () => window.removeEventListener("appbenk_bengkel_location_updated", handleLocUpdate);
   }, []);
 
-  // Sync default workshop to active workshop (Bengkel Fandi Motor)
-  useEffect(() => {
-    if (preferredBengkelId && (!form.bengkelId || form.bengkelId === "bengkel-001")) {
-      setForm((prev) => ({
-        ...prev,
-        bengkelId: preferredBengkelId,
-      }));
-    }
-  }, [preferredBengkelId]);
+  const selectedBengkelInfo = useMemo(() => {
+    const targetId = form.bengkelId || preferredBengkelId;
+    return (
+      bengkel.find((b) => b.id === targetId || (b as any).id_bengkel === targetId) ||
+      bengkel.find((b) => b.id === "bengkel-2307") ||
+      bengkel[0]
+    );
+  }, [form.bengkelId, preferredBengkelId, bengkel]);
 
   const getBengkelLoc = (bId: string): BengkelLocation => {
     const targetId = bId || preferredBengkelId;
     const selectedBengkel =
-      bengkel.find((b) => b.id === targetId) ||
-      bengkel.find((b) => b.id === "bengkel-2307") ||
+      bengkel.find((b) => b.id === targetId || (b as any).id_bengkel === targetId) ||
+      selectedBengkelInfo ||
       activeBengkel;
 
-    const cleanBengkelAlamat = (selectedBengkel?.alamat || "").replace(/\[geo:[^\]]+\]/gi, "").trim();
+    const rawAlamat = selectedBengkel?.alamat || (selectedBengkel as any)?.alamat_bengkel || "";
+    const cleanBengkelAlamat = rawAlamat.replace(/\[geo:[^\]]+\]/gi, "").trim();
 
-    // 1. Prioritas Utama: Ambil langsung dari data store/database yang sedang aktif/dipilih
-    if (selectedBengkel && (selectedBengkel.lat || selectedBengkel.alamat)) {
+    if (selectedBengkel) {
       return {
-        nama: selectedBengkel.nama || "Bengkel Fandi Motor",
+        nama: selectedBengkel.nama || (selectedBengkel as any).nama_bengkel || "Bengkel",
         alamat: cleanBengkelAlamat || "Jl. Selaganggang, Kecamatan mrebet Kabupaten purbalingga.",
-        telepon: selectedBengkel.telepon || "081234567890",
-        jamOperasional: selectedBengkel.jamOperasional || "Senin–Sabtu: 08.00–17.00 WIB",
-        lat: selectedBengkel.lat ?? -7.3245975,
-        lng: selectedBengkel.lng ?? 109.352647,
+        telepon: selectedBengkel.telepon || (selectedBengkel as any).no_telepon || "081234567890",
+        jamOperasional:
+          selectedBengkel.jamOperasional ||
+          (selectedBengkel as any).jam_operasional ||
+          "Senin–Sabtu: 08.00–17.00 WIB",
+        lat: selectedBengkel.lat ?? (selectedBengkel as any).latitude ?? -7.3245975,
+        lng: selectedBengkel.lng ?? (selectedBengkel as any).longitude ?? 109.352647,
       };
     }
 
-    // 2. Fallback: localStorage
-    try {
-      const savedWs = localStorage.getItem(`appbenk_bengkel_location_${targetId}`);
-      if (savedWs) {
-        const parsed = JSON.parse(savedWs);
-        if (parsed.lat && parsed.lng) {
-          return {
-            nama: parsed.nama || selectedBengkel?.nama || "Bengkel Fandi Motor",
-            alamat:
-              cleanBengkelAlamat ||
-              (parsed.alamat || "").replace(/\[geo:[^\]]+\]/gi, "").trim() ||
-              "Jl. Selaganggang, Kecamatan mrebet Kabupaten purbalingga.",
-            telepon: parsed.telepon || selectedBengkel?.telepon || "081234567890",
-            jamOperasional:
-              parsed.jamOperasional ||
-              selectedBengkel?.jamOperasional ||
-              "Senin–Sabtu: 08.00–17.00 WIB",
-            lat: parsed.lat,
-            lng: parsed.lng,
-          };
-        }
-      }
-    } catch {}
-
-    // 3. Default Bengkel Fandi Motor
     return {
-      nama: selectedBengkel?.nama || "Bengkel Fandi Motor",
-      alamat: cleanBengkelAlamat || "Jl. Selaganggang, Kecamatan mrebet Kabupaten purbalingga.",
-      telepon: selectedBengkel?.telepon || "081234567890",
-      jamOperasional: selectedBengkel?.jamOperasional || "Senin–Sabtu: 08.00–17.00 WIB",
+      nama: "Bengkel Fandi Motor",
+      alamat: "Jl. Selaganggang, Kecamatan mrebet Kabupaten purbalingga.",
+      telepon: "081234567890",
+      jamOperasional: "Senin–Sabtu: 08.00–17.00 WIB",
       lat: -7.3245975,
       lng: 109.352647,
     };
@@ -364,9 +342,15 @@ function BookingPelanggan() {
                   <Label>Pilih Cabang Bengkel</Label>
                   <Select
                     value={form.bengkelId}
-                    onValueChange={(v) =>
-                      setForm({ ...form, bengkelId: v, mekanikDiinginkan: "", mekanikId: "" })
-                    }
+                    onValueChange={(v) => {
+                      setForm((prev) => ({
+                        ...prev,
+                        bengkelId: v,
+                        mekanikDiinginkan: "",
+                        mekanikId: "",
+                      }));
+                      setActiveBengkelId(v);
+                    }}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Pilih Cabang Bengkel" />
@@ -379,6 +363,28 @@ function BookingPelanggan() {
                       ))}
                     </SelectContent>
                   </Select>
+
+                  {selectedBengkelInfo && (
+                    <div className="mt-2 flex items-start gap-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-xs text-foreground transition-all">
+                      <Building2 className="size-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-emerald-700 dark:text-emerald-300">
+                            {selectedBengkelInfo.nama}
+                          </span>
+                          <span className="inline-flex items-center rounded-full bg-emerald-500/20 px-1.5 py-0.2 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+                            Cabang Terpilih
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground leading-relaxed">
+                          {selectedBengkelInfo.alamat}
+                        </p>
+                        <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                          Jam Operasional: {selectedBengkelInfo.jamOperasional || "Senin–Sabtu: 08.00–17.00 WIB"}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-1.5">

@@ -60,15 +60,31 @@ export const Route = createFileRoute("/_shell/admin/booking")({
 function BookingAdmin() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const bengkelAktifId = user?.bengkelId || "bengkel-001";
-  const { booking, mekanik, pelanggan, ubahStatusBooking, tugaskanMekanikBooking, aturEstimasiBooking, refreshBooking } = useStore();
+  const bengkelAktifId = user?.bengkelId || "bengkel-2307";
+  const {
+    booking,
+    mekanik,
+    pelanggan,
+    bengkel,
+    ubahStatusBooking,
+    tugaskanMekanikBooking,
+    aturEstimasiBooking,
+    refreshBooking,
+  } = useStore();
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"semua" | StatusBooking>("semua");
+  const [cabangFilter, setCabangFilter] = useState<string>("semua");
   const [detail, setDetail] = useState<Booking | null>(null);
   const [tolak, setTolak] = useState<Booking | null>(null);
   const [alasan, setAlasan] = useState("");
   const [errAlasan, setErrAlasan] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+
+  const getNamaBengkel = (bId?: string) => {
+    if (!bId) return "Bengkel Fandi Motor";
+    const found = bengkel.find((b) => b.id === bId || (b as any).id_bengkel === bId);
+    return found?.nama || "Bengkel Fandi Motor";
+  };
 
   const terimaBooking = (b: Booking) => {
     ubahStatusBooking(b.id, "Diterima");
@@ -141,12 +157,13 @@ function BookingAdmin() {
     const s = q.toLowerCase();
     return booking
       .filter((b) => {
+        if (cabangFilter === "semua") return true;
         if (!b.bengkelId) return true;
-        if (b.bengkelId === bengkelAktifId) return true;
-        // Fallback bengkel-001 <-> bengkel-2307 agar booking pelanggan tidak tercecer
-        if (bengkelAktifId === "bengkel-2307" && b.bengkelId === "bengkel-001") return true;
-        if (bengkelAktifId === "bengkel-001" && b.bengkelId === "bengkel-2307") return true;
-        return false;
+        return (
+          b.bengkelId === cabangFilter ||
+          (cabangFilter === "bengkel-2307" && b.bengkelId === "bengkel-001") ||
+          (cabangFilter === "bengkel-001" && b.bengkelId === "bengkel-2307")
+        );
       })
       .filter((b) => filter === "semua" || b.status === filter)
       .filter((b) =>
@@ -154,7 +171,7 @@ function BookingAdmin() {
           v.toLowerCase().includes(s),
         ),
       );
-  }, [booking, q, filter, bengkelAktifId]);
+  }, [booking, q, filter, cabangFilter]);
 
   const bukaTolak = (b: Booking) => {
     setTolak(b);
@@ -232,7 +249,7 @@ function BookingAdmin() {
               placeholder="Cari nomor booking, pelanggan, atau plat..."
             />
             <Select value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
-              <SelectTrigger className="w-52 bg-card">
+              <SelectTrigger className="w-48 bg-card">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -240,6 +257,20 @@ function BookingAdmin() {
                 {STATUS.map((s) => (
                   <SelectItem key={s} value={s}>
                     {s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={cabangFilter} onValueChange={setCabangFilter}>
+              <SelectTrigger className="w-56 bg-card">
+                <SelectValue placeholder="Semua Cabang Bengkel" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="semua">Semua Cabang Bengkel</SelectItem>
+                {bengkel.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {b.nama}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -270,7 +301,12 @@ function BookingAdmin() {
                 <TableBody>
                   {data.map((b) => (
                     <TableRow key={b.id}>
-                      <TableCell className="font-medium">{b.nomor}</TableCell>
+                      <TableCell className="font-medium">
+                        <span className="block font-semibold">{b.nomor}</span>
+                        <span className="inline-block mt-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
+                          {getNamaBengkel(b.bengkelId)}
+                        </span>
+                      </TableCell>
                       <TableCell>{b.pelanggan}</TableCell>
                       <TableCell className="text-muted-foreground">
                         {b.kendaraan} · {b.plat}

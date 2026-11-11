@@ -1525,23 +1525,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [lockedBengkelId, activeBengkelId]);
 
   const setActiveBengkelId = useCallback((id: string) => {
-    // TOLAK MUTASI JIKA BUKAN SUPER_ADMIN (admin dan owner terkunci permanen pada bengkel milik/tugasnya)
-    if (user && user.role !== "super_admin") {
-      console.warn(
-        `[StoreProvider] Mutasi bengkel ditolak untuk role ${user.role}. Pengguna terkunci permanen pada bengkel ${lockedBengkelId || user.bengkelId || "terdaftar"}.`
-      );
-      return;
-    }
     setActiveBengkelIdState(id);
     if (typeof window !== "undefined") {
       localStorage.setItem("appbenk_active_bengkel_id", id);
+      window.dispatchEvent(new CustomEvent("appbenk_active_bengkel_changed", { detail: { id } }));
     }
-  }, [user, lockedBengkelId]);
+  }, []);
 
   const activeBengkel = useMemo(() => {
-    const targetId = lockedBengkelId || activeBengkelId;
+    const targetId = activeBengkelId || lockedBengkelId;
     return (
-      bengkel.find((b) => b.id === targetId) ||
+      bengkel.find((b) => b.id === targetId || (b as any).id_bengkel === targetId) ||
       bengkel.find((b) => b.id === "bengkel-2307") ||
       bengkelAwal.find((b) => b.id === "bengkel-2307") ||
       bengkel[0] ||

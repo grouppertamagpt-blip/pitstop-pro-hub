@@ -7,6 +7,7 @@ import {
   Bell,
   CreditCard,
   CheckCheck,
+  Check,
   ExternalLink,
   LogOut,
   CalendarCheck,
@@ -49,7 +50,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (!user) return null;
   const groups = NAV_GROUPS[user.role];
   const nav = groups.flatMap((g) => g.items);
-  const { pembayaran, booking, activeBengkel, bengkel } = useStore();
+  const { pembayaran, booking, activeBengkel, activeBengkelId, setActiveBengkelId, bengkel } = useStore();
   const pendingPaymentCount = useMemo(() => {
     return pembayaran.filter((p) => p.status === "Menunggu Verifikasi").length;
   }, [pembayaran]);
@@ -57,77 +58,25 @@ export function AppShell({ children }: { children: ReactNode }) {
     return booking.filter((b) => b.status === "Menunggu Konfirmasi").length;
   }, [booking]);
 
-  const isAnzar =
-    (user.email && user.email.toLowerCase().includes("anzar")) ||
-    (user.nama && user.nama.toLowerCase().includes("anzar")) ||
-    user.id === "usr-demo-1";
-
   const resolvedBengkel = useMemo(() => {
-    // 1. Role admin: Kunci permanen pada bengkel tempat admin ditugaskan/diundang
-    if (user.role === "admin") {
-      const adminBengkelId = user.bengkelId || user.workshopId || (isAnzar ? "bengkel-2307" : "bengkel-001");
-      const found = bengkel.find((b) => b.id === adminBengkelId);
+    // 1. Prioritas utama: Cabang bengkel yang sedang dipilih aktif
+    const targetId = activeBengkelId || user.bengkelId || user.workshopId;
+    if (targetId) {
+      const found = bengkel.find((b) => b.id === targetId || (b as any).id_bengkel === targetId);
       if (found) return found;
-      if (adminBengkelId === "bengkel-2307" || isAnzar) {
-        return {
-          id: "bengkel-2307",
-          nama: "Bengkel Fandi Motor",
-          ownerNama: "Fandi Nasir",
-          alamat: "Jl. Selaganggang, Kecamatan mrebet Kabupaten purbalingga.",
-        };
-      }
     }
+    if (activeBengkel) return activeBengkel;
 
-    // 2. Role owner: Kunci permanen pada bengkel miliknya berdasarkan identitas session auth & kepemilikan
-    if (user.role === "owner") {
-      const ownerBengkelId = user.bengkelId || user.workshopId;
-      if (ownerBengkelId) {
-        const found = bengkel.find((b) => b.id === ownerBengkelId);
-        if (found) return found;
-      }
-      const isFandi =
-        (user.nama && user.nama.toLowerCase().includes("fandi")) ||
-        (user.email && user.email.toLowerCase().includes("fandi"));
-      if (isFandi || isAnzar) {
-        const fandiB = bengkel.find((b) => b.id === "bengkel-2307");
-        if (fandiB) return fandiB;
-        return {
-          id: "bengkel-2307",
-          nama: "Bengkel Fandi Motor",
-          ownerNama: "Fandi Nasir",
-          alamat: "Jl. Selaganggang, Kecamatan mrebet Kabupaten purbalingga.",
-        };
-      }
-      const foundByEmail = bengkel.find(
-        (b) =>
-          (user.email && b.ownerEmail && b.ownerEmail.toLowerCase() === user.email.toLowerCase()) ||
-          (user.nama && b.ownerNama && b.ownerNama.toLowerCase() === user.nama.toLowerCase()) ||
-          (user.nama && b.ownerNama && user.nama.toLowerCase().includes(b.ownerNama.toLowerCase())),
-      );
-      if (foundByEmail) return foundByEmail;
-    }
-
-    if (isAnzar) {
-      return (
-        bengkel.find((b) => b.id === "bengkel-2307") ||
-        activeBengkel || {
-          id: "bengkel-2307",
-          nama: "Bengkel Fandi Motor",
-          ownerNama: "Fandi Nasir",
-          alamat: "Jl. Selaganggang, Kecamatan mrebet Kabupaten purbalingga.",
-        }
-      );
-    }
     return (
-      activeBengkel ||
-      bengkel.find((b) => b.id === "bengkel-2307") || {
+      bengkel.find((b) => b.id === "bengkel-2307") ||
+      bengkel[0] || {
         id: "bengkel-2307",
         nama: "Bengkel Fandi Motor",
         ownerNama: "Fandi Nasir",
         alamat: "Jl. Selaganggang, Kecamatan mrebet Kabupaten purbalingga.",
       }
     );
-  }, [user, isAnzar, activeBengkel, bengkel]);
+  }, [user, activeBengkelId, activeBengkel, bengkel]);
 
   return (
     <div className="min-h-screen bg-background lg:flex">
@@ -253,26 +202,61 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            {/* WORKSHOP IDENTITY BADGE (OWNER & ADMIN) — Status statis permanen terkunci tanpa dropdown / non-clickable */}
-            {(user.role === "admin" || user.role === "owner") && (
-              <div
-                className="flex h-9 items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2.5 text-xs text-foreground cursor-default select-none"
-                title={`${user.role === "owner" ? "Bengkel Milik" : "Bengkel Tugas"}: ${resolvedBengkel.nama} (Owner: ${resolvedBengkel.ownerNama})`}
-              >
-                <span className="relative flex size-2 shrink-0">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
-                </span>
-                <Building2 className="size-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <div className="hidden text-left leading-tight md:block">
-                  <p className="font-semibold text-xs text-foreground truncate max-w-[140px]">
-                    {resolvedBengkel.nama}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground truncate max-w-[140px]">
-                    Owner: {resolvedBengkel.ownerNama}
-                  </p>
-                </div>
-              </div>
+            {/* WORKSHOP IDENTITY BADGE & BRANCH SWITCHER */}
+            {(user.role === "admin" || user.role === "owner" || user.role === "super_admin") && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    className="flex h-9 items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 text-xs text-foreground hover:bg-emerald-500/20 transition-colors cursor-pointer"
+                    title={`Cabang Bengkel: ${resolvedBengkel.nama} (Klik untuk beralih cabang)`}
+                  >
+                    <span className="relative flex size-2 shrink-0">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+                    </span>
+                    <Building2 className="size-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <div className="hidden text-left leading-tight md:block">
+                      <p className="font-semibold text-xs text-foreground truncate max-w-[140px]">
+                        {resolvedBengkel.nama}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground truncate max-w-[140px]">
+                        {resolvedBengkel.ownerNama ? `Owner: ${resolvedBengkel.ownerNama}` : "Cabang Aktif"}
+                      </p>
+                    </div>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-64">
+                  <DropdownMenuLabel className="text-xs font-bold text-muted-foreground uppercase tracking-wide">
+                    Pilih Cabang Bengkel
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {bengkel.map((b) => {
+                    const isSelected = b.id === resolvedBengkel.id;
+                    return (
+                      <DropdownMenuItem
+                        key={b.id}
+                        onSelect={() => {
+                          setActiveBengkelId(b.id);
+                          toast.success(`Beralih ke cabang: ${b.nama}`);
+                        }}
+                        className="flex items-start gap-2 py-2 cursor-pointer"
+                      >
+                        <Building2 className={`size-4 mt-0.5 shrink-0 ${isSelected ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-xs truncate ${isSelected ? "font-bold text-emerald-600 dark:text-emerald-400" : "font-medium"}`}>
+                            {b.nama}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground truncate">
+                            {b.alamat}
+                          </p>
+                        </div>
+                        {isSelected && <Check className="size-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
 
             <NotificationBell />
@@ -676,8 +660,10 @@ function NotificationBell() {
               return (
                 <DropdownMenuItem
                   key={n.id}
-                  onSelect={(e) => {
-                    e.preventDefault();
+                  onSelect={() => {
+                    handleKlikNotif(n.id, n.link, n.statusBooking, n.judul);
+                  }}
+                  onClick={() => {
                     handleKlikNotif(n.id, n.link, n.statusBooking, n.judul);
                   }}
                   className={`flex cursor-pointer items-start gap-3 p-3.5 text-xs focus:bg-muted/70 transition-colors w-full rounded-none border-b border-border/40 last:border-b-0 ${
