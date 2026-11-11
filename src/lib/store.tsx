@@ -2680,6 +2680,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               }
             }
 
+            let createdServis: Awaited<ReturnType<typeof servisService.create>> | null = null;
             if (isExisting && s.id) {
               // UPDATE SERVIS
               await servisService.update(s.id, {
@@ -2780,7 +2781,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               }
             } else {
               // CREATE SERVIS BARU
-              const createdServis = await servisService.create({
+              createdServis = await servisService.create({
                 id_servis: s.id,
                 id_booking: s.bookingId ?? (s as any).id_booking ?? null,
                 id_bengkel: s.bengkelId || "bengkel-001",
