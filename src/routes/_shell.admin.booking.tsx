@@ -167,10 +167,18 @@ function BookingAdmin() {
       })
       .filter((b) => filter === "semua" || b.status === filter)
       .filter((b) =>
-        [b.nomor, b.pelanggan, b.kendaraan, b.plat, b.jenis].some((v) =>
+        [b.nomor, b.pelanggan, b.kendaraan, b.plat, b.jenis, b.keluhan].some((v) =>
           (v || "").toLowerCase().includes(s),
         ),
-      );
+      )
+      .sort((a, b) => {
+        const prioA = a.status === "Menunggu Konfirmasi" ? 0 : 1;
+        const prioB = b.status === "Menunggu Konfirmasi" ? 0 : 1;
+        if (prioA !== prioB) return prioA - prioB;
+        const keyA = a.createdAt || `${a.tanggal || ""} ${a.waktu || ""} ${a.nomor || ""}`;
+        const keyB = b.createdAt || `${b.tanggal || ""} ${b.waktu || ""} ${b.nomor || ""}`;
+        return keyB.localeCompare(keyA);
+      });
   }, [booking, q, filter, cabangFilter]);
 
   const bukaTolak = (b: Booking) => {
@@ -311,7 +319,14 @@ function BookingAdmin() {
                       <TableCell className="text-muted-foreground">
                         {b.kendaraan} · {b.plat}
                       </TableCell>
-                      <TableCell>{b.jenis}</TableCell>
+                      <TableCell>
+                        <span className="block">{b.jenis}</span>
+                        {b.keluhan && (
+                          <span className="mt-0.5 block max-w-52 truncate text-xs text-muted-foreground" title={b.keluhan}>
+                            Keluhan: {b.keluhan}
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell className={b.mekanikDiinginkan ? "" : "text-muted-foreground"}>
                         {b.mekanikDiinginkan || "Tidak ada preferensi"}
                       </TableCell>

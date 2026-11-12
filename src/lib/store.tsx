@@ -199,6 +199,7 @@ export type Booking = {
   alasanTolak?: string | undefined;
   /** ISO local date-time assigned by admin after approval. */
   estimasiSelesai?: string | undefined;
+  createdAt?: string | undefined;
   status: StatusBooking;
 };
 
@@ -2005,7 +2006,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   vehicleId: b.id_kendaraan,
                   bengkelId: b.id_bengkel ?? "bengkel-2307",
                   mekanikId: b.id_mekanik ?? undefined,
-                  kendaraan: ken?.tipe ?? "Kendaraan",
+                  kendaraan: ken
+                    ? [ken.merk, ken.tipe, ken.tahun].filter(Boolean).join(" ").trim() || "Kendaraan"
+                    : "Kendaraan",
                   plat: ken?.plat ?? "",
                   jenis: b.jenis_servis,
                   keluhan: b.keluhan,
@@ -2013,6 +2016,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   waktu: b.waktu_booking,
                   catatan: "",
                   mekanikDiinginkan: b.mekanik_diinginkan ?? undefined,
+                  createdAt: b.created_at ?? undefined,
                   status:
                     b.status_booking === "disetujui"
                       ? "Diterima"
@@ -3576,6 +3580,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                       ? ("Ditolak" as StatusBooking)
                       : ("Menunggu Konfirmasi" as StatusBooking),
                 alasanTolak: b.alasan_penolakan ?? undefined,
+                createdAt: b.created_at ?? undefined,
               };
             });
 
@@ -3587,8 +3592,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               );
               const combined = [...mapped, ...localOnly];
               return combined.sort((a, b) => {
-                const keyA = `${a.tanggal || ""} ${a.waktu || ""} ${a.nomor || ""}`;
-                const keyB = `${b.tanggal || ""} ${b.waktu || ""} ${b.nomor || ""}`;
+                const prioA = a.status === "Menunggu Konfirmasi" ? 0 : 1;
+                const prioB = b.status === "Menunggu Konfirmasi" ? 0 : 1;
+                if (prioA !== prioB) return prioA - prioB;
+                const keyA = a.createdAt || `${a.tanggal || ""} ${a.waktu || ""} ${a.nomor || ""}`;
+                const keyB = b.createdAt || `${b.tanggal || ""} ${b.waktu || ""} ${b.nomor || ""}`;
                 return keyB.localeCompare(keyA);
               });
             });
@@ -4299,10 +4307,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ...b,
           id: idBooking,
           nomor,
+          createdAt: new Date().toISOString(),
           status: "Menunggu Konfirmasi",
         };
 
-        if (isSupabaseConfigured() && b.customerId && b.vehicleId) {
+        if (isSupabaseConfigured()) {
+          if (!b.customerId || !b.vehicleId) {
+            throw new Error("Data pelanggan atau kendaraan belum lengkap untuk menyimpan booking.");
+          }
           try {
             const created = await bookingService.create({
               id_booking: idBooking,
@@ -4323,6 +4335,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 id: created.id_booking,
                 nomor: created.nomor_booking || baru.nomor,
                 bengkelId: created.id_bengkel || b.bengkelId || "bengkel-2307",
+                createdAt: created.created_at || baru.createdAt,
                 status:
                   created.status_booking === "disetujui"
                     ? "Diterima"
@@ -4337,7 +4350,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        setBooking((l) => [baru, ...l]);
+        setBooking((l) => {
+          const filtered = l.filter((x) => x.id !== baru.id && x.nomor !== baru.nomor);
+          return [baru, ...filtered];
+        });
 
         if (typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent("appbenk_booking_updated"));
@@ -4347,15 +4363,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const notifBookingJudul = "Booking Baru Masuk";
         const notifBookingPesan = `Booking baru masuk dari ${b.pelanggan} untuk ${b.kendaraan}.`;
 
-        tambahNotifikasi({
-          role: "admin",
-          tipe: "booking",
-          judul: notifBookingJudul,
-          pesan: notifBookingPesan,
-          link: "/admin/booking",
-          bookingId: baru.id,
-          pelanggan: b.pelanggan,
-        });
+        const alreadyNotified = notifikasi.some(
+          (n) => n.role === "admin" && n.bookingId === baru.id && n.tipe === "booking",
+        );
+        if (!alreadyNotified) {
+          tambahNotifikasi({
+            role: "admin",
+            tipe: "booking",
+            judul: notifBookingJudul,
+            pesan: notifBookingPesan,
+            link: "/admin/booking",
+            bookingId: baru.id,
+            bengkelId: baru.bengkelId,
+            pelanggan: b.pelanggan,
+            statusBooking: "Menunggu Konfirmasi",
+          });
+        }
 
         notifikasiService
           .notifyWorkshopStaff({
