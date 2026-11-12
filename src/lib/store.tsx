@@ -1993,41 +1993,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             );
           }
 
-          if (bkRes.status === "fulfilled" && bkRes.value.length > 0) {
-            setBooking(
-              bkRes.value.map((b) => {
-                const pel = listPelanggan.find((p) => p.id === b.id_pelanggan);
-                const ken = listKendaraan.find((k) => k.id === b.id_kendaraan);
-                return {
-                  id: b.id_booking,
-                  nomor: b.nomor_booking,
-                  pelanggan: pel?.nama ?? "Pelanggan",
-                  customerId: b.id_pelanggan,
-                  vehicleId: b.id_kendaraan,
-                  bengkelId: b.id_bengkel ?? "bengkel-2307",
-                  mekanikId: b.id_mekanik ?? undefined,
-                  kendaraan: ken
-                    ? [ken.merk, ken.tipe, ken.tahun].filter(Boolean).join(" ").trim() || "Kendaraan"
-                    : "Kendaraan",
-                  plat: ken?.plat ?? "",
-                  jenis: b.jenis_servis,
-                  keluhan: b.keluhan,
-                  tanggal: b.tanggal_booking,
-                  waktu: b.waktu_booking,
-                  catatan: "",
-                  mekanikDiinginkan: b.mekanik_diinginkan ?? undefined,
-                  createdAt: b.created_at ?? undefined,
-                  status:
-                    b.status_booking === "disetujui"
-                      ? "Diterima"
-                      : b.status_booking === "ditolak"
-                        ? "Ditolak"
-                        : "Menunggu Konfirmasi",
-                };
-              }),
-            );
-          }
-
           if (srvRes.status === "fulfilled" && srvRes.value.length > 0) {
             const detList: any[] =
               detRes && detRes.status === "fulfilled" && (detRes.value as any).data
@@ -2407,6 +2372,171 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         },
       )
       .catch(() => {});
+  }, []);
+
+  const refreshBooking = useCallback(async (force = false) => {
+    if (!isSupabaseConfigured()) return;
+    const now = Date.now();
+    if (inFlightRefreshBooking) {
+      await inFlightRefreshBooking;
+      if (!force) return;
+    }
+    if (!force && now - lastRefreshBookingTime < REFRESH_COOLDOWN_MS) return;
+    lastRefreshBookingTime = Date.now();
+
+    inFlightRefreshBooking = (async () => {
+      try {
+        const [bkSettled, pelSettled, kenSettled] = await Promise.allSettled([
+          bookingService.getAll(),
+          pelangganService.getAll(),
+          kendaraanService.getAll(),
+        ]);
+
+        if (bkSettled.status !== "fulfilled") {
+          console.error("Gagal mengambil booking dari Supabase:", bkSettled.reason);
+          return;
+        }
+
+        const bkRes = bkSettled.value ?? [];
+        const pelRes = pelSettled.status === "fulfilled" ? (pelSettled.value ?? []) : [];
+        const kenRes = kenSettled.status === "fulfilled" ? (kenSettled.value ?? []) : [];
+
+        const MOCK_BOOKING_NOMORS = new Set([
+          "BK-2026-0032",
+          "BK-2026-0031",
+          "BK-2026-0030",
+          "BK-2026-0029",
+        ]);
+
+        const mapped: Booking[] = bkRes.map((b) => {
+          const pel = pelRes.find((p) => p.id_pelanggan === b.id_pelanggan);
+          const ken = kenRes.find((k) => k.id_kendaraan === b.id_kendaraan);
+          const kendaraanNama = ken
+            ? [ken.merk, ken.tipe, ken.tahun].filter(Boolean).join(" ").trim()
+            : "";
+          return {
+            id: b.id_booking,
+            nomor: b.nomor_booking,
+            pelanggan: pel?.nama ?? "Pelanggan",
+            customerId: b.id_pelanggan,
+            vehicleId: b.id_kendaraan,
+            bengkelId: b.id_bengkel ?? "bengkel-2307",
+            mekanikId: b.id_mekanik ?? undefined,
+            kendaraan: kendaraanNama || "Kendaraan",
+            plat: ken?.nopol ?? "",
+            jenis: b.jenis_servis,
+            keluhan: b.keluhan,
+            tanggal: b.tanggal_booking,
+            waktu: b.waktu_booking,
+            catatan: "",
+            mekanikDiinginkan: b.mekanik_diinginkan ?? undefined,
+            status:
+              b.status_booking === "disetujui"
+                ? ("Diterima" as StatusBooking)
+                : b.status_booking === "ditolak"
+                  ? ("Ditolak" as StatusBooking)
+                  : ("Menunggu Konfirmasi" as StatusBooking),
+            alasanTolak: b.alasan_penolakan ?? undefined,
+            createdAt: b.created_at ?? undefined,
+          };
+        });
+
+        setBooking((currentLocal) => {
+          const localOnly = currentLocal.filter(
+            (loc) =>
+              !MOCK_BOOKING_NOMORS.has(loc.nomor) &&
+              !mapped.some((sb) => sb.id === loc.id || sb.nomor === loc.nomor),
+          );
+          const combined = [...mapped, ...localOnly];
+          return combined.sort((a, b) => {
+            const prioA = a.status === "Menunggu Konfirmasi" ? 0 : 1;
+            const prioB = b.status === "Menunggu Konfirmasi" ? 0 : 1;
+            if (prioA !== prioB) return prioA - prioB;
+            const keyA = a.createdAt || `${a.tanggal || ""} ${a.waktu || ""} ${a.nomor || ""}`;
+            const keyB = b.createdAt || `${b.tanggal || ""} ${b.waktu || ""} ${b.nomor || ""}`;
+            return keyB.localeCompare(keyA);
+          });
+        });
+
+        // Sinkronisasi otomatis notifikasi admin/owner & pelanggan dari data status booking
+        if (mapped.length > 0) {
+          setNotifikasi((prevNotif) => {
+            const updated = [...prevNotif];
+            for (const bk of mapped) {
+              if (bk.status === "Menunggu Konfirmasi") {
+                const existsMasuk = updated.some(
+                  (n) =>
+                    n.id === `notif-bk-masuk-${bk.id}` ||
+                    (n.role === "admin" && n.bookingId === bk.id && n.tipe === "booking"),
+                );
+                if (!existsMasuk) {
+                  updated.unshift({
+                    id: `notif-bk-masuk-${bk.id}`,
+                    role: "admin",
+                    tipe: "booking",
+                    judul: "Booking Baru Masuk",
+                    pesan: `Booking baru masuk dari ${bk.pelanggan} untuk ${bk.kendaraan}.`,
+                    link: "/admin/booking",
+                    waktu: new Date().toISOString(),
+                    dibaca: false,
+                    bookingId: bk.id,
+                    bengkelId: bk.bengkelId,
+                    pelanggan: bk.pelanggan,
+                    statusBooking: "Menunggu Konfirmasi",
+                  });
+                }
+              } else if (bk.status === "Diterima") {
+                const exists = updated.some(
+                  (n) => n.bookingId === bk.id && n.statusBooking === "Diterima",
+                );
+                if (!exists) {
+                  updated.unshift({
+                    id: `notif-bk-terima-${bk.id}`,
+                    role: "pelanggan",
+                    tipe: "booking",
+                    judul: `Booking Diterima (${bk.nomor})`,
+                    pesan: "bookingan diterima silahkan datang ke bengkel",
+                    link: "/pelanggan/status",
+                    waktu: new Date().toISOString(),
+                    dibaca: false,
+                    bookingId: bk.id,
+                    customerId: bk.customerId,
+                    pelanggan: bk.pelanggan,
+                    statusBooking: "Diterima",
+                  });
+                }
+              } else if (bk.status === "Ditolak") {
+                const exists = updated.some(
+                  (n) => n.bookingId === bk.id && n.statusBooking === "Ditolak",
+                );
+                if (!exists) {
+                  updated.unshift({
+                    id: `notif-bk-tolak-${bk.id}`,
+                    role: "pelanggan",
+                    tipe: "booking",
+                    judul: `Booking Ditolak (${bk.nomor})`,
+                    pesan: bk.alasanTolak || "Tidak ada keterangan dari admin.",
+                    link: "/pelanggan/booking",
+                    waktu: new Date().toISOString(),
+                    dibaca: false,
+                    bookingId: bk.id,
+                    customerId: bk.customerId,
+                    pelanggan: bk.pelanggan,
+                    statusBooking: "Ditolak",
+                  });
+                }
+              }
+            }
+            return updated;
+          });
+        }
+      } catch (err) {
+        console.error("Gagal refresh booking:", err);
+      } finally {
+        inFlightRefreshBooking = null;
+      }
+    })();
+    return inFlightRefreshBooking;
   }, []);
 
   const value = useMemo<Store>(
@@ -3517,170 +3647,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           );
         }
       },
-      refreshBooking: async (force = false) => {
-        if (!isSupabaseConfigured()) return;
-        const now = Date.now();
-        if (inFlightRefreshBooking) {
-          await inFlightRefreshBooking;
-          if (!force) return;
-        }
-        if (!force && now - lastRefreshBookingTime < REFRESH_COOLDOWN_MS) return;
-        lastRefreshBookingTime = Date.now();
-
-        inFlightRefreshBooking = (async () => {
-          try {
-            const [bkSettled, pelSettled, kenSettled] = await Promise.allSettled([
-              bookingService.getAll(),
-              pelangganService.getAll(),
-              kendaraanService.getAll(),
-            ]);
-
-            if (bkSettled.status !== "fulfilled") {
-              console.error("Gagal mengambil booking dari Supabase:", bkSettled.reason);
-              return;
-            }
-
-            const bkRes = bkSettled.value ?? [];
-            const pelRes = pelSettled.status === "fulfilled" ? (pelSettled.value ?? []) : [];
-            const kenRes = kenSettled.status === "fulfilled" ? (kenSettled.value ?? []) : [];
-
-            const MOCK_BOOKING_NOMORS = new Set([
-              "BK-2026-0032",
-              "BK-2026-0031",
-              "BK-2026-0030",
-              "BK-2026-0029",
-            ]);
-
-            const mapped: Booking[] = bkRes.map((b) => {
-              const pel = pelRes.find((p) => p.id_pelanggan === b.id_pelanggan);
-              const ken = kenRes.find((k) => k.id_kendaraan === b.id_kendaraan);
-              const kendaraanNama = ken
-                ? [ken.merk, ken.tipe, ken.tahun].filter(Boolean).join(" ").trim()
-                : "";
-              return {
-                id: b.id_booking,
-                nomor: b.nomor_booking,
-                pelanggan: pel?.nama ?? "Pelanggan",
-                customerId: b.id_pelanggan,
-                vehicleId: b.id_kendaraan,
-                bengkelId: b.id_bengkel ?? "bengkel-2307",
-                mekanikId: b.id_mekanik ?? undefined,
-                kendaraan: kendaraanNama || "Kendaraan",
-                plat: ken?.nopol ?? "",
-                jenis: b.jenis_servis,
-                keluhan: b.keluhan,
-                tanggal: b.tanggal_booking,
-                waktu: b.waktu_booking,
-                catatan: "",
-                mekanikDiinginkan: b.mekanik_diinginkan ?? undefined,
-                status:
-                  b.status_booking === "disetujui"
-                    ? ("Diterima" as StatusBooking)
-                    : b.status_booking === "ditolak"
-                      ? ("Ditolak" as StatusBooking)
-                      : ("Menunggu Konfirmasi" as StatusBooking),
-                alasanTolak: b.alasan_penolakan ?? undefined,
-                createdAt: b.created_at ?? undefined,
-              };
-            });
-
-            setBooking((currentLocal) => {
-              const localOnly = currentLocal.filter(
-                (loc) =>
-                  !MOCK_BOOKING_NOMORS.has(loc.nomor) &&
-                  !mapped.some((sb) => sb.id === loc.id || sb.nomor === loc.nomor),
-              );
-              const combined = [...mapped, ...localOnly];
-              return combined.sort((a, b) => {
-                const prioA = a.status === "Menunggu Konfirmasi" ? 0 : 1;
-                const prioB = b.status === "Menunggu Konfirmasi" ? 0 : 1;
-                if (prioA !== prioB) return prioA - prioB;
-                const keyA = a.createdAt || `${a.tanggal || ""} ${a.waktu || ""} ${a.nomor || ""}`;
-                const keyB = b.createdAt || `${b.tanggal || ""} ${b.waktu || ""} ${b.nomor || ""}`;
-                return keyB.localeCompare(keyA);
-              });
-            });
-
-            // Sinkronisasi otomatis notifikasi admin/owner & pelanggan dari data status booking
-            if (mapped.length > 0) {
-              setNotifikasi((prevNotif) => {
-                const updated = [...prevNotif];
-                for (const bk of mapped) {
-                  if (bk.status === "Menunggu Konfirmasi") {
-                    const existsMasuk = updated.some(
-                      (n) =>
-                        n.id === `notif-bk-masuk-${bk.id}` ||
-                        (n.role === "admin" && n.bookingId === bk.id && n.tipe === "booking"),
-                    );
-                    if (!existsMasuk) {
-                      updated.unshift({
-                        id: `notif-bk-masuk-${bk.id}`,
-                        role: "admin",
-                        tipe: "booking",
-                        judul: "Booking Baru Masuk",
-                        pesan: `Booking baru masuk dari ${bk.pelanggan} untuk ${bk.kendaraan}.`,
-                        link: "/admin/booking",
-                        waktu: new Date().toISOString(),
-                        dibaca: false,
-                        bookingId: bk.id,
-                        bengkelId: bk.bengkelId,
-                        pelanggan: bk.pelanggan,
-                        statusBooking: "Menunggu Konfirmasi",
-                      });
-                    }
-                  } else if (bk.status === "Diterima") {
-                    const exists = updated.some(
-                      (n) => n.bookingId === bk.id && n.statusBooking === "Diterima",
-                    );
-                    if (!exists) {
-                      updated.unshift({
-                        id: `notif-bk-terima-${bk.id}`,
-                        role: "pelanggan",
-                        tipe: "booking",
-                        judul: `Booking Diterima (${bk.nomor})`,
-                        pesan: "bookingan diterima silahkan datang ke bengkel",
-                        link: "/pelanggan/status",
-                        waktu: new Date().toISOString(),
-                        dibaca: false,
-                        bookingId: bk.id,
-                        customerId: bk.customerId,
-                        pelanggan: bk.pelanggan,
-                        statusBooking: "Diterima",
-                      });
-                    }
-                  } else if (bk.status === "Ditolak") {
-                    const exists = updated.some(
-                      (n) => n.bookingId === bk.id && n.statusBooking === "Ditolak",
-                    );
-                    if (!exists) {
-                      updated.unshift({
-                        id: `notif-bk-tolak-${bk.id}`,
-                        role: "pelanggan",
-                        tipe: "booking",
-                        judul: `Booking Ditolak (${bk.nomor})`,
-                        pesan: bk.alasanTolak || "Tidak ada keterangan dari admin.",
-                        link: "/pelanggan/booking",
-                        waktu: new Date().toISOString(),
-                        dibaca: false,
-                        bookingId: bk.id,
-                        customerId: bk.customerId,
-                        pelanggan: bk.pelanggan,
-                        statusBooking: "Ditolak",
-                      });
-                    }
-                  }
-                }
-                return updated;
-              });
-            }
-          } catch (err) {
-            console.error("Gagal refresh booking:", err);
-          } finally {
-            inFlightRefreshBooking = null;
-          }
-        })();
-        return inFlightRefreshBooking;
-      },
+      refreshBooking,
       refreshRetur: async () => {
         if (!isSupabaseConfigured()) return;
         try {
@@ -4358,6 +4325,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent("appbenk_booking_updated"));
         }
+        refreshBooking(true).catch(() => {});
 
         // Notifikasi ke Admin & Owner: "Booking baru masuk dari [Nama Pelanggan] untuk [Kendaraan]."
         const notifBookingJudul = "Booking Baru Masuk";
@@ -4635,11 +4603,47 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               : status === "Ditolak"
                 ? "ditolak"
                 : "menunggu_konfirmasi";
-          bookingService.updateStatus(id, dbStatus, alasan).catch(() => {});
+          bookingService
+            .updateStatus(id, dbStatus, alasan)
+            .then(() => {
+              if (typeof window !== "undefined") {
+                window.dispatchEvent(new CustomEvent("appbenk_booking_updated"));
+              }
+              refreshBooking(true).catch(() => {});
+            })
+            .catch((err) => {
+              console.error("Gagal memperbarui status booking di Supabase:", err);
+            });
         }
       },
-      tugaskanMekanikBooking: (id, mekanik) =>
-        setBooking((l) => l.map((x) => (x.id === id ? { ...x, mekanikDitugaskan: mekanik } : x))),
+      tugaskanMekanikBooking: (id, mekanikNama) => {
+        const mkFound = mekanik.find(
+          (m) => m.nama.toLowerCase() === mekanikNama.trim().toLowerCase(),
+        );
+        setBooking((l) =>
+          l.map((x) =>
+            x.id === id
+              ? {
+                  ...x,
+                  mekanikDitugaskan: mekanikNama,
+                  ...(mkFound ? { mekanikId: mkFound.id } : {}),
+                }
+              : x,
+          ),
+        );
+        if (isSupabaseConfigured()) {
+          supabase()
+            .from("booking_servis")
+            .update({
+              mekanik_diinginkan: mekanikNama,
+              ...(mkFound ? { id_mekanik: mkFound.id } : {}),
+            })
+            .eq("id_booking", id)
+            .then(({ error }) => {
+              if (error) console.error("Gagal menyimpan penugasan mekanik booking:", error);
+            });
+        }
+      },
       aturEstimasiBooking: (id, estimasiSelesai) =>
         setBooking((l) => l.map((x) => (x.id === id ? { ...x, estimasiSelesai } : x))),
       ajukanPembayaran: (id, metode, buktiUrl) => {
@@ -5035,6 +5039,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       activeBengkel,
       updateBengkelInfo,
       refreshBengkel,
+      refreshBooking,
       mekanik,
       supplier,
       notifikasi,
@@ -5044,7 +5049,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Inisialisasi Supabase Realtime Listener global + revalidasi otomatis
   useSupabaseRealtime({
     onServisChange: value.refreshServis,
-    onBookingChange: () => value.refreshBooking(true),
+    onBookingChange: () => refreshBooking(true),
     onPembayaranChange: () => {
       value.refreshPembayaran(lockedBengkelId || activeBengkelId);
       value.refreshServis();
@@ -5066,12 +5071,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     value.refreshBengkel().catch(() => {});
     value.refreshServis().catch(() => {});
-    value.refreshBooking(true).catch(() => {});
+    refreshBooking(true).catch(() => {});
     value.refreshSparepart().catch(() => {});
     value.refreshMekanik().catch(() => {});
     value.refreshPelanggan().catch(() => {});
     value.refreshKendaraan().catch(() => {});
-  }, [user?.id, user?.role]);
+  }, [user?.id, user?.role, refreshBooking]);
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }

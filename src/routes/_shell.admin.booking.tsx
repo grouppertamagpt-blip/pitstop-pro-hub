@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { Check, X, Eye, Inbox, RefreshCw, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader, EmptyState } from "@/components/page-header";
@@ -109,8 +109,11 @@ function BookingAdmin() {
     }
   };
 
+  const refreshBookingRef = useRef(refreshBooking);
+  refreshBookingRef.current = refreshBooking;
+
   useEffect(() => {
-    refreshBooking(true).catch(() => {});
+    refreshBookingRef.current(true).catch(() => {});
 
     // Supabase Realtime channel subscription untuk tabel booking_servis
     let channel: any = null;
@@ -127,17 +130,18 @@ function BookingAdmin() {
           },
           (payload) => {
             console.log("[AdminBooking] Realtime event diterima:", payload);
-            refreshBooking(true).catch(() => {});
+            refreshBookingRef.current(true).catch(() => {});
           },
         )
         .subscribe();
     }
 
     const handleSync = () => {
-      refreshBooking(true).catch(() => {});
+      refreshBookingRef.current(true).catch(() => {});
     };
 
     window.addEventListener("appbenk_booking_updated", handleSync);
+    window.addEventListener("focus", handleSync);
 
     const interval = setInterval(handleSync, 8000);
     return () => {
@@ -145,9 +149,10 @@ function BookingAdmin() {
         supabase().removeChannel(channel);
       }
       window.removeEventListener("appbenk_booking_updated", handleSync);
+      window.removeEventListener("focus", handleSync);
       clearInterval(interval);
     };
-  }, [refreshBooking]);
+  }, []);
 
   const mekanikBengkelAktif = useMemo(() => {
     return mekanik.filter((m) => m.bengkelId === bengkelAktifId && m.status === "Aktif");
