@@ -36,7 +36,6 @@ import {
 import { useAuth } from "@/lib/auth";
 import { useStore, tanggalPanjang, type Booking, type StatusBooking } from "@/lib/store";
 import { Input } from "@/components/ui/input";
-import { notifikasiEvent } from "@/lib/whatsapp";
 import { supabase, isSupabaseConfigured } from "@/services/appbenk-service";
 
 const STATUS: StatusBooking[] = ["Menunggu Konfirmasi", "Diterima", "Ditolak"];
@@ -64,7 +63,6 @@ function BookingAdmin() {
   const {
     booking,
     mekanik,
-    pelanggan,
     bengkel,
     ubahStatusBooking,
     tugaskanMekanikBooking,
@@ -94,19 +92,6 @@ function BookingAdmin() {
         onClick: () => navigate({ to: "/admin/servis" }),
       },
     });
-
-    const targetPelanggan = pelanggan.find(
-      (p) => (b.customerId && p.id === b.customerId) || p.nama.toLowerCase() === b.pelanggan.toLowerCase(),
-    );
-    if (targetPelanggan?.telepon) {
-      notifikasiEvent("booking_confirmed", targetPelanggan.telepon, {
-        namaPelanggan: b.pelanggan,
-        namaKendaraan: b.kendaraan,
-        platNomor: b.plat,
-        namaBengkel: "AppBenk",
-        tanggalBooking: `${tanggalPanjang(b.tanggal)} (${b.waktu})`,
-      }).catch(() => {});
-    }
   };
 
   const refreshBookingRef = useRef(refreshBooking);
@@ -203,20 +188,6 @@ function BookingAdmin() {
     if (detail?.id === tolak.id)
       setDetail({ ...detail, status: "Ditolak", alasanTolak: alasanTrimmed });
     toast.info(`Booking ${tolak.nomor} ditolak`);
-
-    const targetPelanggan = pelanggan.find(
-      (p) => (tolak.customerId && p.id === tolak.customerId) || p.nama.toLowerCase() === tolak.pelanggan.toLowerCase(),
-    );
-    if (targetPelanggan?.telepon) {
-      notifikasiEvent("booking_rejected", targetPelanggan.telepon, {
-        namaPelanggan: tolak.pelanggan,
-        namaKendaraan: tolak.kendaraan,
-        platNomor: tolak.plat,
-        namaBengkel: "AppBenk",
-        tanggalBooking: `${tanggalPanjang(tolak.tanggal)} (${tolak.waktu})`,
-        alasanPenolakan: alasanTrimmed,
-      }).catch(() => {});
-    }
 
     setTolak(null);
     setAlasan("");
