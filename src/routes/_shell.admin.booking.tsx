@@ -110,7 +110,7 @@ function BookingAdmin() {
   };
 
   useEffect(() => {
-    refreshBooking().catch(() => {});
+    refreshBooking(true).catch(() => {});
 
     // Supabase Realtime channel subscription untuk tabel booking_servis
     let channel: any = null;
@@ -127,14 +127,14 @@ function BookingAdmin() {
           },
           (payload) => {
             console.log("[AdminBooking] Realtime event diterima:", payload);
-            refreshBooking().catch(() => {});
+            refreshBooking(true).catch(() => {});
           },
         )
         .subscribe();
     }
 
     const handleSync = () => {
-      refreshBooking().catch(() => {});
+      refreshBooking(true).catch(() => {});
     };
 
     window.addEventListener("appbenk_booking_updated", handleSync);
@@ -168,7 +168,7 @@ function BookingAdmin() {
       .filter((b) => filter === "semua" || b.status === filter)
       .filter((b) =>
         [b.nomor, b.pelanggan, b.kendaraan, b.plat, b.jenis].some((v) =>
-          v.toLowerCase().includes(s),
+          (v || "").toLowerCase().includes(s),
         ),
       );
   }, [booking, q, filter, cabangFilter]);
@@ -212,7 +212,7 @@ function BookingAdmin() {
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      await refreshBooking();
+      await refreshBooking(true);
       toast.success("Daftar booking berhasil diperbarui");
     } catch {
       toast.error("Gagal menyegarkan data booking");

@@ -49,17 +49,21 @@ export function isSupabaseConfigured(): boolean {
   return getSupabaseConfig().isConfigured;
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function isValidUuid(val?: string | null): val is string {
+  return Boolean(val && UUID_REGEX.test(val.trim()));
+}
+
 // ----------------------------------------------------------------------------
 // 1. PELANGGAN SERVICE
 // ----------------------------------------------------------------------------
 export const pelangganService = {
-  async getAll(workshopId?: string): Promise<PelangganRow[]> {
+  async getAll(_workshopId?: string): Promise<PelangganRow[]> {
     if (!isSupabaseConfigured()) return [];
-    let query = supabase().from("pelanggan").select("*").order("created_at", { ascending: false });
-    if (workshopId) {
-      query = query.or(`workshop_id.eq.${workshopId},id_bengkel.eq.${workshopId}`);
-    }
-    const { data, error } = await query;
+    const { data, error } = await supabase()
+      .from("pelanggan")
+      .select("*")
+      .order("created_at", { ascending: false });
     if (error) throw error;
     return data ?? [];
   },
@@ -113,15 +117,33 @@ export const pelangganService = {
         updated_at: new Date().toISOString(),
       };
     }
+    // Tabel pelanggan di Supabase tidak memiliki kolom workshop_id / id_bengkel
+    const { workshop_id: _wId, id_bengkel: _bId, user_id, ...restPayload } = payload;
+    const cleanInsert: Record<string, any> = {
+      id_pelanggan: idPelanggan,
+      ...restPayload,
+    };
+    if (isValidUuid(user_id)) {
+      cleanInsert.user_id = user_id;
+    }
+
     const { data, error } = await supabase()
       .from("pelanggan")
-      .insert({
-        id_pelanggan: idPelanggan,
-        ...payload,
-      })
+      .insert(cleanInsert)
       .select()
       .single();
-    if (error) throw error;
+    if (error) {
+      if (error.code === "23505" && payload.email) {
+        const { data: existing } = await supabase()
+          .from("pelanggan")
+          .select("*")
+          .ilike("email", payload.email.trim())
+          .limit(1)
+          .maybeSingle();
+        if (existing) return existing;
+      }
+      throw error;
+    }
     return data;
   },
 
@@ -159,13 +181,12 @@ export const kendaraanService = {
     return data ?? [];
   },
 
-  async getAll(workshopId?: string): Promise<KendaraanRow[]> {
+  async getAll(_workshopId?: string): Promise<KendaraanRow[]> {
     if (!isSupabaseConfigured()) return [];
-    let query = supabase().from("kendaraan").select("*").order("created_at", { ascending: false });
-    if (workshopId) {
-      query = query.or(`workshop_id.eq.${workshopId},id_bengkel.eq.${workshopId}`);
-    }
-    const { data, error } = await query;
+    const { data, error } = await supabase()
+      .from("kendaraan")
+      .select("*")
+      .order("created_at", { ascending: false });
     if (error) throw error;
     return data ?? [];
   },
@@ -194,11 +215,13 @@ export const kendaraanService = {
         updated_at: new Date().toISOString(),
       };
     }
+    // Tabel kendaraan di Supabase tidak memiliki kolom workshop_id / id_bengkel
+    const { workshop_id: _wId, id_bengkel: _bId, ...restPayload } = payload;
     const { data, error } = await supabase()
       .from("kendaraan")
       .insert({
         id_kendaraan: idKendaraan,
-        ...payload,
+        ...restPayload,
       })
       .select()
       .single();
@@ -234,10 +257,11 @@ export const bookingService = {
     let query = supabase()
       .from("booking_servis")
       .select("*")
+      .order("created_at", { ascending: false })
       .order("tanggal_booking", { ascending: false })
       .limit(limitCount);
-    if (workshopId) {
-      query = query.or(`workshop_id.eq.${workshopId},id_bengkel.eq.${workshopId}`);
+    if (typeof workshopId === "string" && workshopId.trim() !== "") {
+      query = query.eq("id_bengkel", workshopId.trim());
     }
     const { data, error } = await query;
     if (error) throw error;
@@ -311,6 +335,8 @@ export const bookingService = {
         .eq("id_kendaraan", payload.id_kendaraan)
         .eq("tanggal_booking", payload.tanggal_booking)
         .eq("waktu_booking", payload.waktu_booking)
+        .eq("jenis_servis", payload.jenis_servis)
+        .eq("keluhan", payload.keluhan)
         .gte("created_at", tenSecsAgo)
         .limit(1)
         .maybeSingle();
@@ -324,27 +350,48 @@ export const bookingService = {
     } catch {}
 
     // Pastikan pelanggan ada di database Supabase dan tertaut dengan user_id auth
+    let resolvedPelangganId = payload.id_pelanggan;
     try {
       const { data: existPel } = await supabase()
         .from("pelanggan")
         .select("id_pelanggan, user_id, email")
-        .eq("id_pelanggan", payload.id_pelanggan)
+        .eq("id_pelanggan", resolvedPelangganId)
         .maybeSingle();
 
       if (!existPel) {
-        await supabase()
-          .from("pelanggan")
-          .insert({
-            id_pelanggan: payload.id_pelanggan,
-            user_id: currentAuthUser?.id ?? null,
-            workshop_id: idBengkel,
-            id_bengkel: idBengkel,
+        // Cek apakah user auth sudah memiliki record pelanggan berdasarkan user_id / email
+        let matchedPel: { id_pelanggan: string; user_id: string | null } | null = null;
+        if (isValidUuid(currentAuthUser?.id) || currentAuthUser?.email) {
+          const filters: string[] = [];
+          if (isValidUuid(currentAuthUser?.id)) filters.push(`user_id.eq.${currentAuthUser.id}`);
+          if (currentAuthUser?.email) filters.push(`email.ilike.${currentAuthUser.email}`);
+          if (filters.length > 0) {
+            const { data: foundPel } = await supabase()
+              .from("pelanggan")
+              .select("id_pelanggan, user_id")
+              .or(filters.join(","))
+              .limit(1)
+              .maybeSingle();
+            if (foundPel) matchedPel = foundPel;
+          }
+        }
+
+        if (matchedPel) {
+          resolvedPelangganId = matchedPel.id_pelanggan;
+        } else {
+          const pelInsert: Record<string, any> = {
+            id_pelanggan: resolvedPelangganId,
             nama: currentAuthUser?.user_metadata?.full_name || "Pelanggan",
-            email: currentAuthUser?.email || `${payload.id_pelanggan}@appbenk.local`,
+            email: currentAuthUser?.email || `${resolvedPelangganId}@appbenk.local`,
             no_hp: currentAuthUser?.user_metadata?.phone || null,
-          });
+          };
+          if (isValidUuid(currentAuthUser?.id)) {
+            pelInsert.user_id = currentAuthUser.id;
+          }
+          await supabase().from("pelanggan").insert(pelInsert);
+        }
       } else if (
-        currentAuthUser?.id &&
+        isValidUuid(currentAuthUser?.id) &&
         (!existPel.user_id || existPel.user_id !== currentAuthUser.id)
       ) {
         try {
@@ -369,9 +416,7 @@ export const bookingService = {
       if (!existKen) {
         await supabase().from("kendaraan").insert({
           id_kendaraan: payload.id_kendaraan,
-          id_pelanggan: payload.id_pelanggan,
-          workshop_id: idBengkel,
-          id_bengkel: idBengkel,
+          id_pelanggan: resolvedPelangganId,
           merk: "Kendaraan",
           tipe: "Umum",
           tahun: 2024,
@@ -382,16 +427,51 @@ export const bookingService = {
       console.warn("[bookingService.create] Penyiapan entitas kendaraan:", e);
     }
 
-    const { data, error } = await supabase()
+    // Tabel booking_servis di Supabase memakai id_bengkel dan tidak memiliki kolom workshop_id
+    const { workshop_id: _wId, ...cleanPayload } = payload;
+    let insertPayload: Record<string, any> = {
+      ...cleanPayload,
+      id_booking: idBooking,
+      id_bengkel: idBengkel,
+      id_pelanggan: resolvedPelangganId,
+      status_booking: "menunggu_konfirmasi",
+    };
+
+    let { data, error } = await supabase()
       .from("booking_servis")
-      .insert({
-        id_booking: idBooking,
-        id_bengkel: idBengkel,
-        ...payload,
-        status_booking: "menunggu_konfirmasi",
-      })
+      .insert(insertPayload)
       .select()
       .single();
+
+    // Recovery otomatis jika nomor_booking bentrok dengan data yang sudah ada (unique constraint)
+    if (error && (error.code === "23505" || error.message?.includes("nomor_booking"))) {
+      try {
+        const { data: existingBookings } = await supabase()
+          .from("booking_servis")
+          .select("nomor_booking");
+        let maxNum = 0;
+        if (existingBookings) {
+          for (const row of existingBookings) {
+            if (!row.nomor_booking) continue;
+            const parts = String(row.nomor_booking).split("-");
+            const num = parseInt(parts[parts.length - 1] ?? "", 10);
+            if (!isNaN(num) && num > maxNum) maxNum = num;
+          }
+        }
+        const year = new Date().getFullYear();
+        const nextNomor = `BK-${year}-${String(maxNum + 1).padStart(4, "0")}`;
+        insertPayload = { ...insertPayload, nomor_booking: nextNomor };
+        const retryRes = await supabase()
+          .from("booking_servis")
+          .insert(insertPayload)
+          .select()
+          .single();
+        data = retryRes.data;
+        error = retryRes.error;
+      } catch (retryErr: any) {
+        error = retryErr;
+      }
+    }
 
     if (error) {
       console.error("[bookingService.create] Gagal insert ke tabel booking_servis:", {

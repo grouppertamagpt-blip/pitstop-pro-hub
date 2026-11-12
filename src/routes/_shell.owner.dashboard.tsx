@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   Select,
@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/select";
 import { TrendingUp, Users, Wrench, Package, ArrowRight, Inbox, Wallet, Activity, Eye } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { BookingBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -20,7 +21,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useStore, rupiah, MEKANIK } from "@/lib/store";
+import { useStore, rupiah, tanggalPanjang, MEKANIK } from "@/lib/store";
 
 export const Route = createFileRoute("/_shell/owner/dashboard")({
   head: () => ({
@@ -39,12 +40,72 @@ export const Route = createFileRoute("/_shell/owner/dashboard")({
 });
 
 function DashboardOwner() {
-  const { servis, pelanggan, sparepart, booking, pembayaran } = useStore();
+  const {
+    servis,
+    pelanggan,
+    sparepart,
+    booking,
+    pembayaran,
+    refreshBooking,
+    refreshServis,
+    refreshPembayaran,
+    refreshPelanggan,
+    refreshSparepart,
+  } = useStore();
+
+  useEffect(() => {
+    refreshBooking(true).catch(() => {});
+    refreshServis().catch(() => {});
+    refreshPembayaran().catch(() => {});
+    refreshPelanggan().catch(() => {});
+    refreshSparepart().catch(() => {});
+
+    const handleBookingSync = () => {
+      refreshBooking(true).catch(() => {});
+    };
+    const handleServisSync = () => {
+      refreshServis().catch(() => {});
+    };
+    const handlePembayaranSync = () => {
+      refreshPembayaran().catch(() => {});
+    };
+
+    window.addEventListener("appbenk_booking_updated", handleBookingSync);
+    window.addEventListener("appbenk_servis_updated", handleServisSync);
+    window.addEventListener("appbenk_pembayaran_updated", handlePembayaranSync);
+
+    const interval = setInterval(() => {
+      refreshBooking(true).catch(() => {});
+      refreshServis().catch(() => {});
+    }, 15000);
+
+    return () => {
+      window.removeEventListener("appbenk_booking_updated", handleBookingSync);
+      window.removeEventListener("appbenk_servis_updated", handleServisSync);
+      window.removeEventListener("appbenk_pembayaran_updated", handlePembayaranSync);
+      clearInterval(interval);
+    };
+  }, [refreshBooking, refreshServis, refreshPembayaran, refreshPelanggan, refreshSparepart]);
+
   const omzet = servis.reduce((a, s) => a + s.total, 0);
 
   // Operational monitoring metrics (Admin features)
   const bookingMenunggu = useMemo(
     () => booking.filter((b) => b.status === "Menunggu Konfirmasi").length,
+    [booking],
+  );
+  const bookingTerbaru = useMemo(
+    () =>
+      [...booking]
+        .sort((a, b) => {
+          const prioA = a.status === "Menunggu Konfirmasi" ? 0 : 1;
+          const prioB = b.status === "Menunggu Konfirmasi" ? 0 : 1;
+          if (prioA !== prioB) return prioA - prioB;
+          const keyA = `${a.tanggal || ""} ${a.waktu || ""} ${a.nomor || ""}`;
+          const keyB = `${b.tanggal || ""} ${b.waktu || ""} ${b.nomor || ""}`;
+          return keyB.localeCompare(keyA);
+        })
+        .slice(0, 5),
     [booking],
   );
   const servisAktif = useMemo(
@@ -262,6 +323,50 @@ function DashboardOwner() {
               </div>
               <ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
             </Link>
+          </div>
+
+          <div className="mt-4 rounded-lg border bg-muted/20 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Booking Masuk Terbaru
+              </p>
+              <Link
+                to="/admin/booking"
+                className="text-xs font-medium text-primary hover:underline"
+              >
+                Kelola Semua Booking →
+              </Link>
+            </div>
+            {bookingTerbaru.length === 0 ? (
+              <p className="py-2 text-xs text-muted-foreground">
+                Belum ada permintaan booking masuk.
+              </p>
+            ) : (
+              <div className="divide-y">
+                {bookingTerbaru.map((b) => (
+                  <div
+                    key={b.id}
+                    className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <span className="font-mono font-semibold text-foreground">{b.nomor}</span>
+                      <span className="mx-1.5 text-muted-foreground">·</span>
+                      <span className="font-medium text-foreground">{b.pelanggan}</span>
+                      <span className="ml-1.5 text-muted-foreground">
+                        ({b.kendaraan}
+                        {b.plat ? ` • ${b.plat}` : ""})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground">
+                        {tanggalPanjang(b.tanggal)} {b.waktu}
+                      </span>
+                      <BookingBadge status={b.status} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

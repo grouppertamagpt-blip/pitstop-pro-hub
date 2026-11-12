@@ -577,7 +577,7 @@ function NotificationBell() {
 
     if (target) {
       if (target.includes("booking")) {
-        refreshBooking().catch(() => {});
+        refreshBooking(true).catch(() => {});
       }
       navigate({ to: target });
     }

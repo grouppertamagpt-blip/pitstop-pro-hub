@@ -38,12 +38,12 @@ function DashboardAdmin() {
   const { servis, sparepart, booking, refreshBooking, refreshServis, refreshSparepart } = useStore();
 
   useEffect(() => {
-    refreshBooking?.().catch(() => {});
+    refreshBooking?.(true).catch(() => {});
     refreshServis?.().catch(() => {});
     refreshSparepart?.().catch(() => {});
 
     const handleSync = () => {
-      refreshBooking?.().catch(() => {});
+      refreshBooking?.(true).catch(() => {});
       refreshServis?.().catch(() => {});
       refreshSparepart?.().catch(() => {});
     };
